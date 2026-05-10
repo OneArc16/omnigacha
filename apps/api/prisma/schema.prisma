@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecommendationLevel {
+  NO_RECOMENDADO
+  SITUACIONAL
+  RECOMENDADO
+  MUY_RECOMENDADO
+}
+
+model User {
+  id              Int              @id @default(autoincrement())
+  name            String
+  email           String           @unique
+  passwordHash    String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  userCharacters  UserCharacter[]
+  recommendations Recommendation[]
+  refreshTokens   RefreshToken[]
+  simulations     Simulation[]
+}
+
+model Character {
+  id             Int          @id @default(autoincrement())
+  name           String          @unique
+  element        String
+  path           String
+  role           String
+  baseAtk        Int
+  baseCritRate   Float
+  baseCritDamage Float
+  baseSpeed      Int
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  userCharacters UserCharacter[]
+  synergiesFrom  CharacterSynergy[] @relation("SynergyFrom")
+  synergiesTo    CharacterSynergy[] @relation("SynergyTo")
+}
+
+model CharacterSynergy {
+  id                 Int    @id @default(autoincrement())
+  sourceCharacterId  Int
+  targetCharacterId  Int
+  weight             Int
+  note               String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  sourceCharacter Character @relation("SynergyFrom", fields: [sourceCharacterId], references: [id], onDelete: Cascade)
+  targetCharacter Character @relation("SynergyTo", fields: [targetCharacterId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceCharacterId, targetCharacterId])
+  @@index([sourceCharacterId])
+  @@index([targetCharacterId])
+}
+
+model RefreshToken {
+  id           Int    @id @default(autoincrement())
+  userId       Int
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model UserCharacter {
+  id               Int   @id @default(autoincrement())
+  userId           Int
+  characterId      Int
+  level            Int
+  eidolon          Int
+  lightConeName    String?
+  lightConeLevel   Int?
+  atk              Int
+  critRate         Float
+  critDamage       Float
+  speed            Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character Character @relation(fields: [characterId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, characterId])
+  @@index([userId])
+  @@index([characterId])
+}
+
+model Recommendation {
+  id                 Int              @id @default(autoincrement())
+  userId             Int
+  targetCharacter    String
+  score              Int
+  level              RecommendationLevel
+  explanation        String
+  estimatedDeltaDmg  Float
+  compatibleTeams    Int
+  createdAt          DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([targetCharacter])
+}
+
+model Simulation {
+  id             Int   @id @default(autoincrement())
+  userId         Int
+  label          String
+  payload        Json
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

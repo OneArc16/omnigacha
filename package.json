@@ -1,0 +1,24 @@
+{
+  "name": "omnigacha",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.0.9",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter web --filter api run dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api start:dev",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:ps": "docker compose ps",
+    "build": "pnpm -r --filter web --filter api run build",
+    "lint": "pnpm -r --filter web --filter api run lint",
+    "test": "pnpm --filter api test",
+    "prisma:generate": "pnpm --filter api prisma:generate",
+    "prisma:migrate:dev": "pnpm --filter api prisma:migrate:dev",
+    "prisma:seed": "pnpm --filter api prisma:seed"
+  },
+  "devDependencies": {
+    "pnpm": "11.0.9"
+  }
+}
