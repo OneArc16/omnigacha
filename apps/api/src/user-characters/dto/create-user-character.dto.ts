@@ -1,4 +1,4 @@
-import { IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 
 export class CreateUserCharacterDto {
   @IsInt()
@@ -14,13 +14,14 @@ export class CreateUserCharacterDto {
   eidolon!: number;
 
   @IsOptional()
-  @IsString()
-  lightConeName?: string;
+  @IsInt()
+  @Min(1)
+  lightConeId?: number | null;
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  lightConeLevel?: number;
+  lightConeLevel?: number | null;
 
   @IsInt()
   @Min(0)

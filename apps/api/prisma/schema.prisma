@@ -44,6 +44,19 @@ model Character {
   synergiesTo    CharacterSynergy[] @relation("SynergyTo")
 }
 
+model LightCone {
+  id                Int             @id @default(autoincrement())
+  name              String          @unique
+  path              String
+  rarity            Int
+  effectDescription String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  userCharacters    UserCharacter[]
+
+  @@index([path])
+}
+
 model CharacterSynergy {
   id                 Int    @id @default(autoincrement())
   sourceCharacterId  Int
@@ -79,6 +92,7 @@ model UserCharacter {
   id               Int   @id @default(autoincrement())
   userId           Int
   characterId      Int
+  lightConeId      Int?
   level            Int
   eidolon          Int
   lightConeName    String?
@@ -92,10 +106,12 @@ model UserCharacter {
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   character Character @relation(fields: [characterId], references: [id], onDelete: Restrict)
+  lightCone LightCone? @relation(fields: [lightConeId], references: [id], onDelete: SetNull)
 
   @@unique([userId, characterId])
   @@index([userId])
   @@index([characterId])
+  @@index([lightConeId])
 }
 
 model Recommendation {

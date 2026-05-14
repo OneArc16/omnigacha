@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { RecommendationLevel } from '@prisma/client';
 import {
   buildBalancedTeam,
@@ -10,6 +10,7 @@ import { paginateByCursor } from '../common/cursor-pagination';
 import { CursorPaginationQueryDto } from '../common/dto/cursor-pagination-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RecommendCharacterDto } from './dto/recommend-character.dto';
+import { SimulateDamageDto } from './dto/simulate-damage.dto';
 
 @Injectable()
 export class SimulationsService {
@@ -29,6 +30,21 @@ export class SimulationsService {
     return paginateByCursor(rows, limit);
   }
 
+  async findRecommendationById(userId: number, recommendationId: number) {
+    const row = await this.prisma.recommendation.findFirst({
+      where: {
+        id: recommendationId,
+        userId,
+      },
+    });
+
+    if (!row) {
+      throw new NotFoundException('Recommendation not found');
+    }
+
+    return row;
+  }
+
   async listHistory(userId: number, query: CursorPaginationQueryDto) {
     const limit = query.limit ?? 5;
     const rows = await this.prisma.simulation.findMany({
@@ -41,6 +57,21 @@ export class SimulationsService {
     });
 
     return paginateByCursor(rows, limit);
+  }
+
+  async findHistoryById(userId: number, simulationId: number) {
+    const row = await this.prisma.simulation.findFirst({
+      where: {
+        id: simulationId,
+        userId,
+      },
+    });
+
+    if (!row) {
+      throw new NotFoundException('Simulation not found');
+    }
+
+    return row;
   }
 
   async recommend(userId: number, dto: RecommendCharacterDto) {
@@ -183,6 +214,7 @@ export class SimulationsService {
         userId,
         label: `recommend-${targetCharacter.name}`,
         payload: {
+          type: 'recommendation',
           targetCharacterId: targetCharacter.id,
           synergyCount: synergyRows.length,
           synergyScore,
@@ -211,6 +243,108 @@ export class SimulationsService {
         damageComparison,
         scoringBreakdown,
       },
+    };
+  }
+
+  async simulateDamage(userId: number, dto: SimulateDamageDto) {
+    const ownedEntries = await this.prisma.userCharacter.findMany({
+      where: { userId },
+      include: { character: true },
+    });
+
+    if (ownedEntries.length === 0) {
+      throw new BadRequestException(
+        'Debes registrar personajes antes de simular escenarios.',
+      );
+    }
+
+    const targetEntry = ownedEntries.find(
+      (entry) => entry.characterId === dto.characterId,
+    );
+
+    if (!targetEntry) {
+      throw new NotFoundException(
+        'El personaje a simular no existe en tu roster.',
+      );
+    }
+
+    const baseRoster = ownedEntries.map((entry) =>
+      this.mapOwnedEntryToAnalysisCharacter(entry),
+    );
+
+    const baseCharacter = this.mapOwnedEntryToAnalysisCharacter(targetEntry);
+    const simulatedCharacter = this.applyStatAdjustments(baseCharacter, dto);
+
+    const simulatedRoster = baseRoster.map((character) =>
+      character.id === dto.characterId ? simulatedCharacter : character,
+    );
+
+    const rosterIds = [...new Set(baseRoster.map((member) => member.id))];
+    const synergyRows = await this.prisma.characterSynergy.findMany({
+      where: {
+        sourceCharacterId: { in: rosterIds },
+        targetCharacterId: { in: rosterIds },
+      },
+    });
+
+    const baseTeam = buildBalancedTeam(baseRoster, undefined, synergyRows);
+    const simulatedTeam = buildBalancedTeam(
+      simulatedRoster,
+      undefined,
+      synergyRows,
+    );
+
+    const damageComparison = compareTeamDamage(
+      baseTeam,
+      simulatedTeam,
+      synergyRows,
+    );
+
+    const payload = {
+      type: 'damage_scenario',
+      characterId: targetEntry.characterId,
+      characterName: targetEntry.character.name,
+      adjustments: this.normalizeAdjustments(dto),
+      baseStats: {
+        atk: baseCharacter.atk,
+        critRate: baseCharacter.critRate,
+        critDamage: baseCharacter.critDamage,
+        speed: baseCharacter.speed,
+      },
+      simulatedStats: {
+        atk: simulatedCharacter.atk,
+        critRate: simulatedCharacter.critRate,
+        critDamage: simulatedCharacter.critDamage,
+        speed: simulatedCharacter.speed,
+      },
+      baseTeamDamage: Number(
+        damageComparison.currentTeam.totalDamage.toFixed(2),
+      ),
+      simulatedTeamDamage: Number(
+        damageComparison.proposedTeam.totalDamage.toFixed(2),
+      ),
+      deltaAbsolute: damageComparison.deltaAbsolute,
+      deltaPercent: damageComparison.deltaPercent,
+    };
+
+    await this.prisma.simulation.create({
+      data: {
+        userId,
+        label: `damage-sim-${targetEntry.character.name}`,
+        payload,
+      },
+    });
+
+    return {
+      character: {
+        id: targetEntry.characterId,
+        name: targetEntry.character.name,
+      },
+      ...payload,
+      damageComparison,
+      summary:
+        `Escenario ${targetEntry.character.name}: ${payload.baseTeamDamage.toFixed(2)} -> ` +
+        `${payload.simulatedTeamDamage.toFixed(2)} (${payload.deltaPercent.toFixed(2)}%).`,
     };
   }
 
@@ -292,6 +426,31 @@ export class SimulationsService {
       critRate: targetCharacter.baseCritRate,
       critDamage: targetCharacter.baseCritDamage,
       speed: targetCharacter.baseSpeed,
+    };
+  }
+
+  private applyStatAdjustments(
+    baseCharacter: AnalysisCharacter,
+    dto: SimulateDamageDto,
+  ): AnalysisCharacter {
+    const critRateDeltaRatio = dto.critRateDelta / 100;
+    const critDamageDeltaRatio = dto.critDamageDelta / 100;
+
+    return {
+      ...baseCharacter,
+      atk: Math.max(1, baseCharacter.atk + dto.atkDelta),
+      critRate: this.clamp(baseCharacter.critRate + critRateDeltaRatio, 0, 1),
+      critDamage: Math.max(0, baseCharacter.critDamage + critDamageDeltaRatio),
+      speed: Math.max(1, baseCharacter.speed + dto.speedDelta),
+    };
+  }
+
+  private normalizeAdjustments(dto: SimulateDamageDto) {
+    return {
+      atkDelta: dto.atkDelta,
+      critRateDelta: Number(dto.critRateDelta.toFixed(2)),
+      critDamageDelta: Number(dto.critDamageDelta.toFixed(2)),
+      speedDelta: dto.speedDelta,
     };
   }
 

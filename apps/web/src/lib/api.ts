@@ -57,38 +57,7 @@ export type RecommendationResponse = {
     targetCharacter: Character;
     ownedCount: number;
     topSynergies: string[];
-    damageComparison: {
-      currentTeam: {
-        totalDamage: number;
-        roleCoverageBonus: number;
-        profileCoverageBonus: number;
-        members: Array<{
-          id: number;
-          name: string;
-          role: 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
-          profile: 'single_target' | 'aoe' | 'dot' | 'burst' | 'utility';
-          damage: number;
-          synergyMultiplier: number;
-          profileMultiplier: number;
-        }>;
-      };
-      proposedTeam: {
-        totalDamage: number;
-        roleCoverageBonus: number;
-        profileCoverageBonus: number;
-        members: Array<{
-          id: number;
-          name: string;
-          role: 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
-          profile: 'single_target' | 'aoe' | 'dot' | 'burst' | 'utility';
-          damage: number;
-          synergyMultiplier: number;
-          profileMultiplier: number;
-        }>;
-      };
-      deltaAbsolute: number;
-      deltaPercent: number;
-    };
+    damageComparison: DamageComparison;
     scoringBreakdown: {
       baseScore: number;
       synergyImpact: number;
@@ -98,6 +67,62 @@ export type RecommendationResponse = {
       ownershipPenalty: number;
     };
   };
+};
+
+export type TeamDamageMember = {
+  id: number;
+  name: string;
+  role: 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
+  profile: 'single_target' | 'aoe' | 'dot' | 'burst' | 'utility';
+  damage: number;
+  synergyMultiplier: number;
+  profileMultiplier: number;
+};
+
+export type TeamDamageSnapshot = {
+  totalDamage: number;
+  roleCoverageBonus: number;
+  profileCoverageBonus: number;
+  members: TeamDamageMember[];
+};
+
+export type DamageComparison = {
+  currentTeam: TeamDamageSnapshot;
+  proposedTeam: TeamDamageSnapshot;
+  deltaAbsolute: number;
+  deltaPercent: number;
+};
+
+export type DamageScenarioResponse = {
+  character: {
+    id: number;
+    name: string;
+  };
+  type: 'damage_scenario';
+  adjustments: {
+    atkDelta: number;
+    critRateDelta: number;
+    critDamageDelta: number;
+    speedDelta: number;
+  };
+  baseStats: {
+    atk: number;
+    critRate: number;
+    critDamage: number;
+    speed: number;
+  };
+  simulatedStats: {
+    atk: number;
+    critRate: number;
+    critDamage: number;
+    speed: number;
+  };
+  baseTeamDamage: number;
+  simulatedTeamDamage: number;
+  deltaAbsolute: number;
+  deltaPercent: number;
+  damageComparison: DamageComparison;
+  summary: string;
 };
 
 export type RecommendationRecord = {
@@ -112,11 +137,14 @@ export type RecommendationRecord = {
   createdAt: string;
 };
 
+export type RecommendationDetailResponse = RecommendationRecord;
+
 export type SimulationHistoryItem = {
   id: number;
   userId: number;
   label: string;
   payload: {
+    type?: 'recommendation' | 'damage_scenario';
     targetCharacterId?: number;
     synergyCount?: number;
     synergyScore?: number;
@@ -125,6 +153,29 @@ export type SimulationHistoryItem = {
     currentTeamDamage?: number;
     proposedTeamDamage?: number;
     deltaPercent?: number;
+    deltaAbsolute?: number;
+    characterId?: number;
+    characterName?: string;
+    adjustments?: {
+      atkDelta?: number;
+      critRateDelta?: number;
+      critDamageDelta?: number;
+      speedDelta?: number;
+    };
+    baseStats?: {
+      atk?: number;
+      critRate?: number;
+      critDamage?: number;
+      speed?: number;
+    };
+    simulatedStats?: {
+      atk?: number;
+      critRate?: number;
+      critDamage?: number;
+      speed?: number;
+    };
+    baseTeamDamage?: number;
+    simulatedTeamDamage?: number;
     scoringBreakdown?: {
       baseScore?: number;
       synergyImpact?: number;
@@ -139,6 +190,8 @@ export type SimulationHistoryItem = {
   createdAt: string;
 };
 
+export type SimulationDetailResponse = SimulationHistoryItem;
+
 export type Character = {
   id: number;
   name: string;
@@ -151,16 +204,31 @@ export type Character = {
   baseSpeed: number;
 };
 
+export type LightCone = {
+  id: number;
+  name: string;
+  path: string;
+  rarity: number;
+  effectDescription?: string | null;
+};
+
 export type UserCharacter = {
   id: number;
   level: number;
   eidolon: number;
+  lightConeId?: number | null;
   lightConeName?: string;
   lightConeLevel?: number;
   atk: number;
   critRate: number;
   critDamage: number;
   speed: number;
+  lightCone?: {
+    id: number;
+    name: string;
+    path: string;
+    rarity: number;
+  } | null;
   character: {
     id: number;
     name: string;

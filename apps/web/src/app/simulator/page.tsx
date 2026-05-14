@@ -13,6 +13,7 @@ import {
   apiRequest,
   Character,
   CursorPage,
+  DamageScenarioResponse,
   RecommendationRecord,
   RecommendationResponse,
   SimulationHistoryItem,
@@ -28,6 +29,19 @@ function formatDate(value: string) {
   });
 }
 
+function asNumber(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatSigned(value: number, digits = 2) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
+}
+
+function formatPercentInput(value: number) {
+  return String(Number((value * 100).toFixed(2)));
+}
+
 export default function SimulatorPage() {
   const [accessToken, setAccessToken] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
@@ -41,8 +55,23 @@ export default function SimulatorPage() {
   const [simulationNextCursor, setSimulationNextCursor] = useState<number | null>(null);
   const [loadingMoreRecommendations, setLoadingMoreRecommendations] = useState(false);
   const [loadingMoreSimulations, setLoadingMoreSimulations] = useState(false);
+  const [simulatingDamage, setSimulatingDamage] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [scenarioCharacterId, setScenarioCharacterId] = useState<number | null>(null);
+  const [atkInput, setAtkInput] = useState('0');
+  const [critRateInput, setCritRateInput] = useState('0');
+  const [critDamageInput, setCritDamageInput] = useState('0');
+  const [speedInput, setSpeedInput] = useState('0');
+  const [damageScenario, setDamageScenario] = useState<DamageScenarioResponse | null>(null);
+  const [recommendationSearch, setRecommendationSearch] = useState('');
+  const [recommendationLevelFilter, setRecommendationLevelFilter] = useState<
+    'ALL' | RecommendationRecord['level']
+  >('ALL');
+  const [simulationSearch, setSimulationSearch] = useState('');
+  const [simulationTypeFilter, setSimulationTypeFilter] = useState<
+    'ALL' | 'recommendation' | 'damage_scenario'
+  >('ALL');
 
   useEffect(() => {
     const tokens = loadAuthTokens();
@@ -82,6 +111,75 @@ export default function SimulatorPage() {
     () => catalog.find((character) => character.id === targetCharacterId),
     [catalog, targetCharacterId],
   );
+
+  const scenarioCharacterEntry = useMemo(
+    () =>
+      owned.find((entry) => entry.character.id === scenarioCharacterId) ?? null,
+    [owned, scenarioCharacterId],
+  );
+
+  useEffect(() => {
+    if (owned.length === 0) {
+      setScenarioCharacterId(null);
+      setAtkInput('0');
+      setCritRateInput('0');
+      setCritDamageInput('0');
+      setSpeedInput('0');
+      return;
+    }
+
+    const hasSelected = owned.some(
+      (entry) => entry.character.id === scenarioCharacterId,
+    );
+
+    if (!hasSelected) {
+      const nextEntry = owned[0];
+      setScenarioCharacterId(nextEntry.character.id);
+      setAtkInput(String(nextEntry.atk));
+      setCritRateInput(formatPercentInput(nextEntry.critRate));
+      setCritDamageInput(formatPercentInput(nextEntry.critDamage));
+      setSpeedInput(String(nextEntry.speed));
+    }
+  }, [owned, scenarioCharacterId]);
+
+  const filteredRecommendationHistory = useMemo(() => {
+    const search = recommendationSearch.trim().toLowerCase();
+
+    return recommendationHistory.filter((entry) => {
+      const matchesLevel =
+        recommendationLevelFilter === 'ALL' ||
+        entry.level === recommendationLevelFilter;
+
+      const matchesSearch =
+        search.length === 0 ||
+        entry.targetCharacter.toLowerCase().includes(search) ||
+        entry.explanation.toLowerCase().includes(search);
+
+      return matchesLevel && matchesSearch;
+    });
+  }, [recommendationHistory, recommendationLevelFilter, recommendationSearch]);
+
+  const filteredSimulationHistory = useMemo(() => {
+    const search = simulationSearch.trim().toLowerCase();
+
+    return simulationHistory.filter((entry) => {
+      const resolvedType =
+        entry.payload?.type ??
+        (entry.label.startsWith('damage-sim-')
+          ? 'damage_scenario'
+          : 'recommendation');
+
+      const matchesType =
+        simulationTypeFilter === 'ALL' || resolvedType === simulationTypeFilter;
+
+      const matchesSearch =
+        search.length === 0 ||
+        entry.label.toLowerCase().includes(search) ||
+        (entry.payload?.characterName?.toLowerCase().includes(search) ?? false);
+
+      return matchesType && matchesSearch;
+    });
+  }, [simulationHistory, simulationSearch, simulationTypeFilter]);
 
   async function loadRecommendationHistory(cursor: number | null, append: boolean) {
     if (!accessToken) return;
@@ -143,6 +241,59 @@ export default function SimulatorPage() {
       setError(
         err instanceof Error ? err.message : 'No fue posible simular la recomendacion',
       );
+    }
+  }
+
+  async function handleSimulateDamage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken || !scenarioCharacterId || !scenarioCharacterEntry) return;
+
+    setError('');
+    setStatus('');
+    setSimulatingDamage(true);
+
+    try {
+      const targetAtk = asNumber(atkInput);
+      const targetCritRatePercent = asNumber(critRateInput);
+      const targetCritDamagePercent = asNumber(critDamageInput);
+      const targetSpeed = asNumber(speedInput);
+
+      if (
+        targetAtk < 1 ||
+        targetCritRatePercent < 0 ||
+        targetCritDamagePercent < 0 ||
+        targetSpeed < 1
+      ) {
+        throw new Error('Ingresa stats simulados validos (ATK/SPD >= 1, CR/CD >= 0).');
+      }
+
+      const critRateBasePercent = scenarioCharacterEntry.critRate * 100;
+      const critDamageBasePercent = scenarioCharacterEntry.critDamage * 100;
+
+      const response = await apiRequest<DamageScenarioResponse>(
+        '/simulations/damage',
+        {
+          method: 'POST',
+          token: accessToken,
+          body: {
+            characterId: scenarioCharacterId,
+            atkDelta: Math.round(targetAtk - scenarioCharacterEntry.atk),
+            critRateDelta: targetCritRatePercent - critRateBasePercent,
+            critDamageDelta: targetCritDamagePercent - critDamageBasePercent,
+            speedDelta: Math.round(targetSpeed - scenarioCharacterEntry.speed),
+          },
+        },
+      );
+
+      setDamageScenario(response);
+      setStatus('Escenario hipotetico simulado correctamente.');
+      await loadSimulationHistory(null, false);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'No fue posible simular el escenario',
+      );
+    } finally {
+      setSimulatingDamage(false);
     }
   }
 
@@ -259,9 +410,188 @@ export default function SimulatorPage() {
         )}
       </Card>
 
+      <Card title="3. Simulacion de escenarios" subtitle="Ajusta stats para evaluar un caso hipotetico en tu cuenta.">
+        {owned.length === 0 ? (
+          <p className="text-sm text-[var(--ink-500)]">
+            Agrega personajes a tu cuenta para habilitar simulaciones de stats.
+          </p>
+        ) : (
+          <form className="space-y-3" onSubmit={handleSimulateDamage}>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                  Personaje a simular
+                </p>
+                <select
+                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+                  value={scenarioCharacterId ?? ''}
+                  onChange={(event) => {
+                    const selectedId = event.target.value
+                      ? Number(event.target.value)
+                      : null;
+                    setScenarioCharacterId(selectedId);
+
+                    const selectedEntry =
+                      selectedId === null
+                        ? null
+                        : owned.find((entry) => entry.character.id === selectedId) ?? null;
+
+                    if (!selectedEntry) {
+                      setAtkInput('0');
+                      setCritRateInput('0');
+                      setCritDamageInput('0');
+                      setSpeedInput('0');
+                      return;
+                    }
+
+                    setAtkInput(String(selectedEntry.atk));
+                    setCritRateInput(formatPercentInput(selectedEntry.critRate));
+                    setCritDamageInput(formatPercentInput(selectedEntry.critDamage));
+                    setSpeedInput(String(selectedEntry.speed));
+                  }}
+                  required
+                >
+                  <option value="">Selecciona un personaje</option>
+                  {owned.map((entry) => (
+                    <option key={entry.id} value={entry.character.id}>
+                      {entry.character.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs text-[var(--ink-700)]">
+                <p className="font-semibold text-[var(--ink-900)]">Como funciona la simulacion</p>
+                <p className="mt-1">
+                  Ingresa los stats finales objetivo (no incrementos).
+                </p>
+                <p>
+                  El sistema convierte internamente esos valores a cambios y recalcula el dano con formula multiplicativa (Base DMG, DMG%, DEF, RES, DMG Taken y Toughness).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">ATK simulado</p>
+                <input
+                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+                  type="number"
+                  step={1}
+                  min={1}
+                  max={99999}
+                  value={atkInput}
+                  onChange={(event) => setAtkInput(event.target.value)}
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">CRIT Rate simulado (%)</p>
+                <input
+                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  max={100}
+                  value={critRateInput}
+                  onChange={(event) => setCritRateInput(event.target.value)}
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">CRIT DMG simulado (%)</p>
+                <input
+                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  max={999}
+                  value={critDamageInput}
+                  onChange={(event) => setCritDamageInput(event.target.value)}
+                />
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">SPD simulado</p>
+                <input
+                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+                  type="number"
+                  step={1}
+                  min={1}
+                  max={999}
+                  value={speedInput}
+                  onChange={(event) => setSpeedInput(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <Button type="submit" disabled={simulatingDamage || !scenarioCharacterId || !scenarioCharacterEntry}>
+              {simulatingDamage ? 'Simulando...' : 'Simular escenario'}
+            </Button>
+          </form>
+        )}
+
+        {damageScenario ? (
+          <div className="mt-4 space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
+            <p className="text-sm font-semibold text-[var(--ink-900)]">{damageScenario.summary}</p>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats base</p>
+                <p className="mt-1 text-[var(--ink-700)]">
+                  ATK {damageScenario.baseStats.atk} · CR{' '}
+                  {Math.round(damageScenario.baseStats.critRate * 100)}% · CD{' '}
+                  {Math.round(damageScenario.baseStats.critDamage * 100)}% · SPD{' '}
+                  {damageScenario.baseStats.speed}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats simuladas</p>
+                <p className="mt-1 text-[var(--ink-700)]">
+                  ATK {damageScenario.simulatedStats.atk} · CR{' '}
+                  {Math.round(damageScenario.simulatedStats.critRate * 100)}% · CD{' '}
+                  {Math.round(damageScenario.simulatedStats.critDamage * 100)}% · SPD{' '}
+                  {damageScenario.simulatedStats.speed}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano base</p>
+                <p className="mt-1 font-semibold text-[var(--ink-900)]">
+                  {damageScenario.baseTeamDamage.toFixed(2)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano simulado</p>
+                <p className="mt-1 font-semibold text-[var(--ink-900)]">
+                  {damageScenario.simulatedTeamDamage.toFixed(2)}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
+                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Delta</p>
+                <p className={`mt-1 font-semibold ${damageScenario.deltaPercent >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {formatSigned(damageScenario.deltaPercent)}%
+                </p>
+              </div>
+            </div>
+
+            <DamageComparisonChart
+              currentTotal={damageScenario.baseTeamDamage}
+              proposedTotal={damageScenario.simulatedTeamDamage}
+              currentLabel="Base"
+              proposedLabel="Simulado"
+              seriesName="Dano de escenario"
+              helpTextByLabel={{
+                Base: 'Base: dano estimado del equipo antes de aplicar tus cambios de stats.',
+                Simulado: 'Simulado: dano estimado luego de aplicar los deltas del escenario.',
+              }}
+            />
+          </div>
+        ) : null}
+      </Card>
+
       {result ? (
         <Card
-          title="3. Resultado de la recomendacion"
+          title="4. Resultado de la recomendacion"
           subtitle={targetCharacter ? `Objetivo: ${targetCharacter.name}` : 'Resultado generado'}
         >
           <div className="grid gap-3 md:grid-cols-3">
@@ -374,24 +704,67 @@ export default function SimulatorPage() {
         </Card>
       ) : null}
 
-      <Card title="4. Historial de recomendaciones" subtitle="Recomendaciones recientes generadas en tu cuenta.">
+      <Card title="5. Historial de recomendaciones" subtitle="Recomendaciones recientes generadas en tu cuenta.">
+        <div className="mb-3 grid gap-3 md:grid-cols-2">
+          <input
+            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            placeholder="Buscar por personaje o explicacion"
+            value={recommendationSearch}
+            onChange={(event) => setRecommendationSearch(event.target.value)}
+          />
+          <select
+            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            value={recommendationLevelFilter}
+            onChange={(event) =>
+              setRecommendationLevelFilter(
+                event.target.value as
+                  | 'ALL'
+                  | 'NO_RECOMENDADO'
+                  | 'SITUACIONAL'
+                  | 'RECOMENDADO'
+                  | 'MUY_RECOMENDADO',
+              )
+            }
+          >
+            <option value="ALL">Todos los niveles</option>
+            <option value="NO_RECOMENDADO">NO_RECOMENDADO</option>
+            <option value="SITUACIONAL">SITUACIONAL</option>
+            <option value="RECOMENDADO">RECOMENDADO</option>
+            <option value="MUY_RECOMENDADO">MUY_RECOMENDADO</option>
+          </select>
+        </div>
+
         {recommendationHistory.length === 0 ? (
           <p className="text-sm text-[var(--ink-500)]">Aun no hay recomendaciones guardadas.</p>
         ) : (
           <>
-            <ul className="space-y-2">
-              {recommendationHistory.map((entry) => (
+            {filteredRecommendationHistory.length === 0 ? (
+              <p className="text-sm text-[var(--ink-500)]">
+                No hay resultados con los filtros actuales.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {filteredRecommendationHistory.map((entry) => (
                 <li key={entry.id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-[var(--ink-900)]">
                       {entry.targetCharacter} · {entry.level} · {entry.score}/100
                     </p>
-                    <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
+                      <Link
+                        className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
+                        href={`/simulator/recommendations/${entry.id}`}
+                      >
+                        Ver detalle
+                      </Link>
+                    </div>
                   </div>
                   <p className="mt-1 text-sm text-[var(--ink-600)]">{entry.explanation}</p>
                 </li>
-              ))}
-            </ul>
+                ))}
+              </ul>
+            )}
 
             {recommendationNextCursor ? (
               <div className="mt-3">
@@ -409,24 +782,78 @@ export default function SimulatorPage() {
         )}
       </Card>
 
-      <Card title="5. Historial de simulaciones" subtitle="Ejecuciones guardadas del motor ligero.">
+      <Card title="6. Historial de simulaciones" subtitle="Ejecuciones guardadas del motor ligero.">
+        <div className="mb-3 grid gap-3 md:grid-cols-2">
+          <input
+            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            placeholder="Buscar por etiqueta o personaje"
+            value={simulationSearch}
+            onChange={(event) => setSimulationSearch(event.target.value)}
+          />
+          <select
+            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            value={simulationTypeFilter}
+            onChange={(event) =>
+              setSimulationTypeFilter(
+                event.target.value as 'ALL' | 'recommendation' | 'damage_scenario',
+              )
+            }
+          >
+            <option value="ALL">Todos los tipos</option>
+            <option value="recommendation">recommendation</option>
+            <option value="damage_scenario">damage_scenario</option>
+          </select>
+        </div>
+
         {simulationHistory.length === 0 ? (
           <p className="text-sm text-[var(--ink-500)]">Aun no hay simulaciones guardadas.</p>
         ) : (
           <>
-            <ul className="space-y-2">
-              {simulationHistory.map((entry) => (
+            {filteredSimulationHistory.length === 0 ? (
+              <p className="text-sm text-[var(--ink-500)]">
+                No hay simulaciones que coincidan con los filtros.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {filteredSimulationHistory.map((entry) => (
                 <li key={entry.id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-[var(--ink-900)]">{entry.label}</p>
-                    <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
+                      <Link
+                        className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
+                        href={`/simulator/history/${entry.id}`}
+                      >
+                        Ver detalle
+                      </Link>
+                    </div>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--ink-600)]">
-                    Score: {entry.payload?.score ?? 'N/A'} · Nivel: {entry.payload?.level ?? 'N/A'} · Sinergias: {entry.payload?.synergyCount ?? 0}
-                  </p>
+                  {entry.payload?.type === 'damage_scenario' || entry.label.startsWith('damage-sim-') ? (
+                    <p className="mt-1 text-xs text-[var(--ink-600)]">
+                      Personaje: {entry.payload?.characterName ?? 'N/A'} · Dano base:{' '}
+                      {typeof entry.payload?.baseTeamDamage === 'number'
+                        ? entry.payload.baseTeamDamage.toFixed(2)
+                        : 'N/A'}{' '}
+                      · Dano simulado:{' '}
+                      {typeof entry.payload?.simulatedTeamDamage === 'number'
+                        ? entry.payload.simulatedTeamDamage.toFixed(2)
+                        : 'N/A'}{' '}
+                      · Delta:{' '}
+                      {typeof entry.payload?.deltaPercent === 'number'
+                        ? formatSigned(entry.payload.deltaPercent)
+                        : 'N/A'}
+                      %
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-[var(--ink-600)]">
+                      Score: {entry.payload?.score ?? 'N/A'} · Nivel: {entry.payload?.level ?? 'N/A'} · Sinergias: {entry.payload?.synergyCount ?? 0}
+                    </p>
+                  )}
                 </li>
-              ))}
-            </ul>
+                ))}
+              </ul>
+            )}
 
             {simulationNextCursor ? (
               <div className="mt-3">

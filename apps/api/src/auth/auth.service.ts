@@ -8,6 +8,7 @@ import { LoginDto } from './dto/login.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import type { JwtPayload } from './types/jwt-payload.type';
 
 @Injectable()
@@ -38,7 +39,11 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
 
-    return this.buildAuthResponse({ sub: user.id, email: user.email }, user.id, user);
+    return this.buildAuthResponse(
+      { sub: user.id, email: user.email },
+      user.id,
+      user,
+    );
   }
 
   async login(dto: LoginDto) {
@@ -67,6 +72,35 @@ export class AuthService {
     );
   }
 
+  async changePassword(dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email.toLowerCase() },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const passwordHash = await hash(dto.newPassword, 12);
+    const revokedAt = new Date();
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt },
+      }),
+    ]);
+
+    return {
+      success: true,
+      message: 'Password updated successfully. Please log in again.',
+    };
+  }
+
   async me(userId: number) {
     return this.prisma.user.findUnique({
       where: { id: userId },
@@ -87,7 +121,11 @@ export class AuthService {
       include: { user: true },
     });
 
-    if (!savedToken || savedToken.revokedAt || savedToken.expiresAt < new Date()) {
+    if (
+      !savedToken ||
+      savedToken.revokedAt ||
+      savedToken.expiresAt < new Date()
+    ) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

@@ -9,8 +9,16 @@ import {
 } from './types';
 
 const BASE_SPEED = 100;
+const ACTION_GAUGE_BASE = 10000;
 
-const ROLE_MULTIPLIER: Record<TeamRole, number> = {
+// Formula defaults based on standard same-level assumptions used in HSR theorycraft.
+const DEFAULT_ATTACKER_LEVEL = 80;
+const DEFAULT_TARGET_LEVEL = 80;
+const DEFAULT_TARGET_RES = 0.2;
+const DEFAULT_TOUGHNESS_REDUCTION = 0.1;
+
+// Selection multipliers used by team builder scoring.
+const ROLE_SELECTION_MULTIPLIER: Record<TeamRole, number> = {
   dps: 1.22,
   sub_dps: 1.08,
   support: 0.75,
@@ -18,7 +26,7 @@ const ROLE_MULTIPLIER: Record<TeamRole, number> = {
   unknown: 0.9,
 };
 
-const PROFILE_MULTIPLIER: Record<DamageProfile, number> = {
+const PROFILE_SELECTION_MULTIPLIER: Record<DamageProfile, number> = {
   single_target: 1.16,
   aoe: 1.08,
   dot: 1.12,
@@ -26,10 +34,70 @@ const PROFILE_MULTIPLIER: Record<DamageProfile, number> = {
   utility: 0.84,
 };
 
+// Approximate per-action offensive coefficients by role/profile.
+const ROLE_SKILL_MULTIPLIER: Record<TeamRole, number> = {
+  dps: 1.0,
+  sub_dps: 0.88,
+  support: 0.52,
+  sustain: 0.45,
+  unknown: 0.74,
+};
+
+const PROFILE_SKILL_MULTIPLIER: Record<DamageProfile, number> = {
+  single_target: 2.05,
+  aoe: 1.75,
+  dot: 1.42,
+  burst: 2.3,
+  utility: 1.0,
+};
+
+const PROFILE_EXTRA_MULTIPLIER: Record<DamageProfile, number> = {
+  single_target: 0.12,
+  aoe: 0.09,
+  dot: 0.2,
+  burst: 0.26,
+  utility: 0.05,
+};
+
+const PROFILE_DMG_BONUS: Record<DamageProfile, number> = {
+  single_target: 0.38,
+  aoe: 0.3,
+  dot: 0.35,
+  burst: 0.45,
+  utility: 0.2,
+};
+
+const ROLE_DMG_BONUS: Record<TeamRole, number> = {
+  dps: 0.22,
+  sub_dps: 0.13,
+  support: 0.05,
+  sustain: 0.03,
+  unknown: 0.08,
+};
+
+const DOT_DMG_BONUS = 0.2;
+const SYNERGY_TO_DMG_BONUS_FACTOR = 0.9;
+
+type TeamCombatContext = {
+  attackerLevel: number;
+  targetLevel: number;
+  targetRes: number;
+  defReduction: number;
+  defIgnore: number;
+  resPen: number;
+  dmgTakenBonus: number;
+  universalDmgReduction: number;
+  weaken: number;
+};
+
 export function inferTeamRole(path: string, roleText: string): TeamRole {
   const text = `${path} ${roleText}`.toLowerCase();
 
-  if (text.includes('abundance') || text.includes('preservation') || text.includes('sustain')) {
+  if (
+    text.includes('abundance') ||
+    text.includes('preservation') ||
+    text.includes('sustain')
+  ) {
     return 'sustain';
   }
 
@@ -42,7 +110,11 @@ export function inferTeamRole(path: string, roleText: string): TeamRole {
     return 'support';
   }
 
-  if (text.includes('sub') || text.includes('follow-up') || text.includes('dot')) {
+  if (
+    text.includes('sub') ||
+    text.includes('follow-up') ||
+    text.includes('dot')
+  ) {
     return 'sub_dps';
   }
 
@@ -58,7 +130,10 @@ export function inferTeamRole(path: string, roleText: string): TeamRole {
   return 'unknown';
 }
 
-export function inferDamageProfile(path: string, roleText: string): DamageProfile {
+export function inferDamageProfile(
+  path: string,
+  roleText: string,
+): DamageProfile {
   const text = `${path} ${roleText}`.toLowerCase();
 
   if (text.includes('dot') || text.includes('nihility')) {
@@ -100,27 +175,6 @@ export function inferDamageProfile(path: string, roleText: string): DamageProfil
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function damagePerCharacter(member: TeamDamageMember): number {
-  const critRate = clamp(member.critRate, 0, 1);
-  const critDamage = Math.max(0, member.critDamage);
-  const critMultiplier = 1 + critRate * critDamage;
-
-  const speedDelta = (member.speed - BASE_SPEED) / 220;
-  const speedMultiplier = 1 + clamp(speedDelta, -0.15, 0.5);
-
-  const roleMultiplier = ROLE_MULTIPLIER[member.role];
-  const profileMultiplier = member.profileMultiplier;
-
-  return (
-    member.atk *
-    critMultiplier *
-    speedMultiplier *
-    roleMultiplier *
-    profileMultiplier *
-    member.synergyMultiplier
-  );
 }
 
 function buildSynergyMap(edges: SynergyEdge[]): Map<string, number> {
@@ -190,7 +244,8 @@ function calculateMemberSynergyMultiplier(
     return 1;
   }
 
-  const averageWeight = pairWeights.reduce((acc, weight) => acc + weight, 0) / pairWeights.length;
+  const averageWeight =
+    pairWeights.reduce((acc, weight) => acc + weight, 0) / pairWeights.length;
   return 1 + clamp((averageWeight - 50) / 300, -0.08, 0.18);
 }
 
@@ -229,6 +284,138 @@ function profileCoverageBonus(team: TeamDamageMember[]): number {
   return 0.96;
 }
 
+function hasDebuffToolkit(member: TeamDamageMember): boolean {
+  const text = `${member.path} ${member.roleText}`.toLowerCase();
+  return (
+    text.includes('nihility') || text.includes('debuff') || text.includes('dot')
+  );
+}
+
+function buildTeamCombatContext(
+  members: TeamDamageMember[],
+): TeamCombatContext {
+  const supportCount = members.filter(
+    (member) => member.role === 'support',
+  ).length;
+  const debufferCount = members.filter((member) =>
+    hasDebuffToolkit(member),
+  ).length;
+  const avgSpeed =
+    members.reduce((sum, member) => sum + member.speed, 0) /
+    Math.max(members.length, 1);
+
+  const speedPressureBonus = avgSpeed >= 134 ? 0.02 : 0;
+
+  return {
+    attackerLevel: DEFAULT_ATTACKER_LEVEL,
+    targetLevel: DEFAULT_TARGET_LEVEL,
+    targetRes: DEFAULT_TARGET_RES,
+    defReduction: clamp(
+      0.08 * debufferCount + 0.03 * supportCount + speedPressureBonus,
+      0,
+      0.65,
+    ),
+    defIgnore: clamp(0.02 * debufferCount, 0, 0.35),
+    resPen: clamp(0.05 * debufferCount + 0.02 * supportCount, 0, 0.55),
+    dmgTakenBonus: clamp(0.06 * debufferCount + 0.03 * supportCount, 0, 0.6),
+    universalDmgReduction: DEFAULT_TOUGHNESS_REDUCTION,
+    weaken: 0,
+  };
+}
+
+function calculateDefMultiplier(context: TeamCombatContext): number {
+  const defenseScaling = Math.max(
+    0,
+    1 - context.defReduction - context.defIgnore,
+  );
+  const numerator = context.attackerLevel + 20;
+  const denominator =
+    (context.targetLevel + 20) * defenseScaling + (context.attackerLevel + 20);
+
+  if (denominator <= 0) {
+    return 1;
+  }
+
+  return numerator / denominator;
+}
+
+function calculateResMultiplier(context: TeamCombatContext): number {
+  const effectiveRes = clamp(context.targetRes - context.resPen, -1, 0.9);
+  return 1 - effectiveRes;
+}
+
+function calculateCritMultiplier(member: TeamDamageMember): number {
+  if (member.profile === 'dot') {
+    // DoT effects do not crit in HSR.
+    return 1;
+  }
+
+  const critRate = clamp(member.critRate, 0, 1);
+  const critDamage = Math.max(0, member.critDamage);
+  return 1 + critRate * critDamage;
+}
+
+function calculateActionFrequencyMultiplier(speed: number): number {
+  const actionValue = ACTION_GAUGE_BASE / Math.max(1, speed);
+  const actionsPer100AV = 100 / actionValue;
+  return clamp(actionsPer100AV, 0.5, 2.8);
+}
+
+function calculateDmgPercentMultiplier(
+  member: TeamDamageMember,
+  context: TeamCombatContext,
+): number {
+  const dotBonus = member.profile === 'dot' ? DOT_DMG_BONUS : 0;
+  const otherBonus =
+    (member.synergyMultiplier - 1) * SYNERGY_TO_DMG_BONUS_FACTOR +
+    Math.max(0, context.resPen * 0.25);
+
+  return (
+    1 +
+    PROFILE_DMG_BONUS[member.profile] +
+    ROLE_DMG_BONUS[member.role] +
+    dotBonus +
+    Math.max(0, otherBonus)
+  );
+}
+
+function calculateBaseDamage(member: TeamDamageMember): number {
+  const skillMultiplier =
+    ROLE_SKILL_MULTIPLIER[member.role] *
+    PROFILE_SKILL_MULTIPLIER[member.profile];
+  const extraMultiplier = PROFILE_EXTRA_MULTIPLIER[member.profile];
+
+  return (skillMultiplier + extraMultiplier) * Math.max(1, member.atk);
+}
+
+function damagePerCharacter(
+  member: TeamDamageMember,
+  context: TeamCombatContext,
+): number {
+  const baseDamage = calculateBaseDamage(member);
+  const dmgPercentMultiplier = calculateDmgPercentMultiplier(member, context);
+  const defMultiplier = calculateDefMultiplier(context);
+  const resMultiplier = calculateResMultiplier(context);
+  const dmgTakenMultiplier = 1 + context.dmgTakenBonus;
+  const universalDmgReductionMultiplier =
+    1 - clamp(context.universalDmgReduction, 0, 0.95);
+  const weakenMultiplier = 1 - clamp(context.weaken, 0, 1);
+  const critMultiplier = calculateCritMultiplier(member);
+  const actionsMultiplier = calculateActionFrequencyMultiplier(member.speed);
+
+  const outgoingPerAction =
+    baseDamage *
+    dmgPercentMultiplier *
+    defMultiplier *
+    resMultiplier *
+    dmgTakenMultiplier *
+    universalDmgReductionMultiplier *
+    weakenMultiplier *
+    critMultiplier;
+
+  return outgoingPerAction * actionsMultiplier;
+}
+
 export function calculateTeamDamage(
   team: AnalysisCharacter[],
   synergyEdges: SynergyEdge[],
@@ -250,25 +437,35 @@ export function calculateTeamDamage(
       role,
       profile,
       synergyMultiplier,
-      profileMultiplier: PROFILE_MULTIPLIER[profile],
+      profileMultiplier: PROFILE_SELECTION_MULTIPLIER[profile],
     };
   });
 
   const roleBonus = roleCoverageBonus(members);
   const profileBonus = profileCoverageBonus(members);
+  const teamCombatContext = buildTeamCombatContext(members);
 
-  const memberDamageRows = members.map((member) => ({
-    id: member.id,
-    name: member.name,
-    role: member.role,
-    profile: member.profile,
-    damage: damagePerCharacter(member),
-    synergyMultiplier: member.synergyMultiplier,
-    profileMultiplier: member.profileMultiplier,
-  }));
+  const memberDamageRows = members.map((member) => {
+    const dmgPercentMultiplier = calculateDmgPercentMultiplier(
+      member,
+      teamCombatContext,
+    );
+
+    return {
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      profile: member.profile,
+      damage: damagePerCharacter(member, teamCombatContext),
+      synergyMultiplier: member.synergyMultiplier,
+      profileMultiplier: Number(dmgPercentMultiplier.toFixed(4)),
+    };
+  });
 
   const totalDamage =
-    memberDamageRows.reduce((acc, row) => acc + row.damage, 0) * roleBonus * profileBonus;
+    memberDamageRows.reduce((acc, row) => acc + row.damage, 0) *
+    roleBonus *
+    profileBonus;
 
   return {
     totalDamage,
@@ -308,8 +505,15 @@ function scoreForSelection(character: AnalysisCharacter): number {
   const role = inferTeamRole(character.path, character.roleText);
   const profile = inferDamageProfile(character.path, character.roleText);
 
-  const base = character.atk * (1 + critRate * critDamage) * (1 + (character.speed - BASE_SPEED) / 400);
-  return base * ROLE_MULTIPLIER[role] * PROFILE_MULTIPLIER[profile];
+  const base =
+    character.atk *
+    (1 + critRate * critDamage) *
+    (1 + (character.speed - BASE_SPEED) / 400);
+  return (
+    base *
+    ROLE_SELECTION_MULTIPLIER[role] *
+    PROFILE_SELECTION_MULTIPLIER[profile]
+  );
 }
 
 function pickBestByRole(
@@ -352,7 +556,8 @@ function scoreForTeamSelection(
     selectedIds,
     synergyMap,
   );
-  const selectedSynergyMultiplier = 1 + clamp((avgSelectedSynergy - 50) / 130, -0.2, 0.36);
+  const selectedSynergyMultiplier =
+    1 + clamp((avgSelectedSynergy - 50) / 130, -0.2, 0.36);
 
   const forcedSynergy =
     typeof forcedId === 'number'
@@ -366,7 +571,9 @@ function scoreForTeamSelection(
 
   // If a forced target exists, down-rank candidates with no direct link to it.
   const noForcedSynergyPenalty =
-    typeof forcedId === 'number' && candidate.id !== forcedId && forcedSynergy === 0
+    typeof forcedId === 'number' &&
+    candidate.id !== forcedId &&
+    forcedSynergy === 0
       ? 0.72
       : 1;
 
@@ -388,7 +595,9 @@ export function buildBalancedTeam(
   const usedIds = new Set<number>();
 
   if (typeof forcedId === 'number') {
-    const forcedCharacter = roster.find((character) => character.id === forcedId);
+    const forcedCharacter = roster.find(
+      (character) => character.id === forcedId,
+    );
     if (forcedCharacter) {
       selected.push(forcedCharacter);
       usedIds.add(forcedCharacter.id);
@@ -429,8 +638,18 @@ export function buildBalancedTeam(
     }
 
     const next = remaining.sort((a, b) => {
-      const aScore = scoreForTeamSelection(a, selectedIds, forcedId, synergyMap);
-      const bScore = scoreForTeamSelection(b, selectedIds, forcedId, synergyMap);
+      const aScore = scoreForTeamSelection(
+        a,
+        selectedIds,
+        forcedId,
+        synergyMap,
+      );
+      const bScore = scoreForTeamSelection(
+        b,
+        selectedIds,
+        forcedId,
+        synergyMap,
+      );
       return bScore - aScore;
     })[0];
 
@@ -445,7 +664,9 @@ export function countCompatibleTeams(
   roster: AnalysisCharacter[],
   targetCharacterId: number,
 ): number {
-  const others = roster.filter((character) => character.id !== targetCharacterId);
+  const others = roster.filter(
+    (character) => character.id !== targetCharacterId,
+  );
   if (others.length < 3) {
     return 1;
   }
@@ -462,7 +683,9 @@ export function countCompatibleTeams(
           others[k],
         ].filter(Boolean) as AnalysisCharacter[];
 
-        const roles = new Set(team.map((member) => inferTeamRole(member.path, member.roleText)));
+        const roles = new Set(
+          team.map((member) => inferTeamRole(member.path, member.roleText)),
+        );
         const hasDps = roles.has('dps') || roles.has('sub_dps');
         const hasSupport = roles.has('support');
 

@@ -25,6 +25,129 @@ const characters = [
   { name: 'Sunday', element: 'Imaginary', path: 'Harmony', role: 'Hypercarry Enabler', baseAtk: 601, baseCritRate: 0.05, baseCritDamage: 0.5, baseSpeed: 102 }
 ];
 
+const lightCones = [
+  {
+    name: 'Along the Passing Shore',
+    path: 'Nihility',
+    rarity: 5,
+    effectDescription: 'Crit-focused signature cone with debuff synergy.',
+  },
+  {
+    name: 'Good Night and Sleep Well',
+    path: 'Nihility',
+    rarity: 4,
+    effectDescription: 'Scales with debuff count and fits DoT or debuff teams.',
+  },
+  {
+    name: 'Eyes of the Prey',
+    path: 'Nihility',
+    rarity: 4,
+    effectDescription: 'Boosts effect hit rate and damage over time output.',
+  },
+  {
+    name: 'Patience Is All You Need',
+    path: 'Nihility',
+    rarity: 5,
+    effectDescription: 'Premium Kafka option with speed and damage bonuses.',
+  },
+  {
+    name: 'But the Battle Isnt Over',
+    path: 'Harmony',
+    rarity: 5,
+    effectDescription: 'Energy and team utility for hypercarry supports.',
+  },
+  {
+    name: 'Past and Future',
+    path: 'Harmony',
+    rarity: 4,
+    effectDescription: 'Simple buffing cone for action-forward support units.',
+  },
+  {
+    name: 'Carve the Moon, Weave the Clouds',
+    path: 'Harmony',
+    rarity: 4,
+    effectDescription: 'Rotating team buffs for general Harmony value.',
+  },
+  {
+    name: 'Earthly Escapade',
+    path: 'Harmony',
+    rarity: 5,
+    effectDescription: 'High-value crit support option for premium buffers.',
+  },
+  {
+    name: 'Echoes of the Coffin',
+    path: 'Abundance',
+    rarity: 5,
+    effectDescription: 'Healing utility with extra team tempo support.',
+  },
+  {
+    name: 'Time Waits for No One',
+    path: 'Abundance',
+    rarity: 5,
+    effectDescription: 'Reliable healing cone with extra damage contribution.',
+  },
+  {
+    name: 'Shared Feeling',
+    path: 'Abundance',
+    rarity: 4,
+    effectDescription: 'Energy support and healing for utility sustain builds.',
+  },
+  {
+    name: 'Moment of Victory',
+    path: 'Preservation',
+    rarity: 5,
+    effectDescription: 'Defensive signature cone for tanky preservation units.',
+  },
+  {
+    name: 'Texture of Memories',
+    path: 'Preservation',
+    rarity: 5,
+    effectDescription: 'Free defensive option with strong survivability value.',
+  },
+  {
+    name: 'Trend of the Universal Market',
+    path: 'Preservation',
+    rarity: 4,
+    effectDescription: 'Utility option that adds burn pressure in some teams.',
+  },
+  {
+    name: 'On the Fall of an Aeon',
+    path: 'Destruction',
+    rarity: 5,
+    effectDescription: 'F2P premium attack scaling cone for destruction carries.',
+  },
+  {
+    name: 'Something Irreplaceable',
+    path: 'Destruction',
+    rarity: 5,
+    effectDescription: 'Generalist destruction cone with sustain and damage.',
+  },
+  {
+    name: 'The Moles Welcome You',
+    path: 'Destruction',
+    rarity: 4,
+    effectDescription: 'Stacking attack option for budget destruction builds.',
+  },
+  {
+    name: 'Worrisome, Blissful',
+    path: 'Hunt',
+    rarity: 5,
+    effectDescription: 'Follow-up oriented signature option for Hunt units.',
+  },
+  {
+    name: 'Cruising in the Stellar Sea',
+    path: 'Hunt',
+    rarity: 5,
+    effectDescription: 'Excellent F2P cone with strong crit support.',
+  },
+  {
+    name: 'Only Silence Remains',
+    path: 'Hunt',
+    rarity: 4,
+    effectDescription: 'Solid single-target cone when enemy count is low.',
+  },
+];
+
 const synergyRules = [
   { source: 'Kafka', target: 'Black Swan', weight: 95, note: 'Best in slot DoT core.' },
   { source: 'Kafka', target: 'Ruan Mei', weight: 78, note: 'Universal speed and dmg amplification.' },
@@ -56,6 +179,20 @@ async function seedCharacters() {
         baseCritRate: character.baseCritRate,
         baseCritDamage: character.baseCritDamage,
         baseSpeed: character.baseSpeed,
+      },
+    });
+  }
+}
+
+async function seedLightCones() {
+  for (const lightCone of lightCones) {
+    await prisma.lightCone.upsert({
+      where: { name: lightCone.name },
+      create: lightCone,
+      update: {
+        path: lightCone.path,
+        rarity: lightCone.rarity,
+        effectDescription: lightCone.effectDescription,
       },
     });
   }
@@ -99,10 +236,11 @@ async function seedSynergies() {
 
 async function main() {
   await seedCharacters();
+  await seedLightCones();
   await seedSynergies();
 
   console.log(
-    `Seeded ${characters.length} characters and ${synergyRules.length} synergy rules`,
+    `Seeded ${characters.length} characters, ${lightCones.length} light cones and ${synergyRules.length} synergy rules`,
   );
 }
 

@@ -14,6 +14,10 @@ import {
 type DamageComparisonChartProps = {
   currentTotal: number;
   proposedTotal: number;
+  currentLabel?: string;
+  proposedLabel?: string;
+  seriesName?: string;
+  helpTextByLabel?: Record<string, string>;
 };
 
 type HelpBarShapeProps = {
@@ -22,6 +26,7 @@ type HelpBarShapeProps = {
   width?: number;
   height?: number;
   fill?: string;
+  helpTextByLabel?: Record<string, string>;
   payload?: {
     name?: string;
   };
@@ -40,10 +45,11 @@ function DamageHelpBarShape({
   width = 0,
   height = 0,
   fill = '#0284c7',
+  helpTextByLabel = DAMAGE_HELP,
   payload,
 }: HelpBarShapeProps) {
   const helpText =
-    DAMAGE_HELP[payload?.name ?? ''] ??
+    helpTextByLabel[payload?.name ?? ''] ??
     'Barra de comparacion de dano estimado.';
 
   const iconX = x + width - 10;
@@ -74,14 +80,18 @@ function DamageHelpBarShape({
 export function DamageComparisonChart({
   currentTotal,
   proposedTotal,
+  currentLabel = 'Actual',
+  proposedLabel = 'Propuesto',
+  seriesName = 'Dano estimado',
+  helpTextByLabel = DAMAGE_HELP,
 }: DamageComparisonChartProps) {
   const data = [
     {
-      name: 'Actual',
+      name: currentLabel,
       total: Number(currentTotal.toFixed(2)),
     },
     {
-      name: 'Propuesto',
+      name: proposedLabel,
       total: Number(proposedTotal.toFixed(2)),
     },
   ];
@@ -97,10 +107,10 @@ export function DamageComparisonChart({
           <Legend />
           <Bar
             dataKey="total"
-            name="Dano estimado"
+            name={seriesName}
             fill="#0284c7"
             radius={[8, 8, 0, 0]}
-            shape={<DamageHelpBarShape />}
+            shape={<DamageHelpBarShape helpTextByLabel={helpTextByLabel} />}
           />
         </BarChart>
       </ResponsiveContainer>
