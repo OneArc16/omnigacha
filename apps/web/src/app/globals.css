@@ -1,28 +1,40 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #f5f7fb;
-  --surface: #ffffff;
-  --surface-2: #f8fafc;
-  --ink-900: #0f172a;
-  --ink-700: #334155;
-  --ink-600: #475569;
-  --ink-500: #64748b;
-  --ink-400: #94a3b8;
-  --line: #dbe4ee;
-  --line-strong: #c4d4e4;
-  --brand-200: #bae6fd;
-  --brand-400: #38bdf8;
-  --brand-500: #0ea5e9;
+  color-scheme: dark;
+  --font-ui-sans: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --font-ui-mono: "JetBrains Mono", "SFMono-Regular", "SF Mono", ui-monospace,
+    monospace;
+  --bg: #050a15;
+  --surface: #0b1424;
+  --surface-2: #101d33;
+  --surface-3: #162640;
+  --surface-elevated: #1d2f4d;
+  --ink-900: #e2e8f0;
+  --ink-800: #cbd5e1;
+  --ink-700: #a9b6cb;
+  --ink-600: #92a3bc;
+  --ink-500: #7d90ab;
+  --ink-400: #61748e;
+  --line: #243651;
+  --line-strong: #2f4668;
+  --brand-200: #145169;
+  --brand-400: #22c1ee;
+  --brand-500: #06a8dd;
   --brand-600: #0284c7;
   --brand-700: #0369a1;
+  --positive-500: #10b981;
+  --danger-500: #f43f5e;
+  --warning-500: #f59e0b;
+  --chart-grid: #304766;
+  --chart-axis: #9bb0cb;
 }
 
 @theme inline {
   --color-background: var(--bg);
   --color-foreground: var(--ink-900);
-  --font-sans: var(--font-space-grotesk);
-  --font-mono: var(--font-jetbrains-mono);
+  --font-sans: var(--font-ui-sans);
+  --font-mono: var(--font-ui-mono);
 }
 
 html,
@@ -30,9 +42,34 @@ body {
   min-height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink-900);
-  font-family: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui-sans);
+  background-image:
+    radial-gradient(
+      circle at 15% 10%,
+      color-mix(in oklab, var(--brand-500) 20%, transparent) 0%,
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 85% -5%,
+      color-mix(in oklab, var(--warning-500) 16%, transparent) 0%,
+      transparent 34%
+    ),
+    linear-gradient(180deg, #050a15 0%, #040812 100%);
+}
+
+* {
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--brand-500) 35%, transparent);
+  color: var(--ink-900);
 }

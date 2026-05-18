@@ -5,13 +5,22 @@ type CardProps = {
   subtitle?: string;
   children: ReactNode;
   className?: string;
+  id?: string;
 };
 
-export function Card({ title, subtitle, children, className = '' }: CardProps) {
+export function Card({
+  title,
+  subtitle,
+  children,
+  className = '',
+  id,
+}: CardProps) {
   return (
     <section
+      id={id}
       className={[
-        'rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[0_8px_28px_-20px_rgba(0,0,0,.45)] backdrop-blur-sm',
+        'rounded-2xl border border-[var(--line)] bg-[var(--surface)]/95 p-5 shadow-[0_16px_42px_-28px_rgba(2,8,23,.85)] backdrop-blur-sm',
+        'transition-colors duration-200 hover:border-[var(--line-strong)]',
         className,
       ].join(' ')}
     >

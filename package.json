@@ -14,6 +14,7 @@
     "build": "pnpm -r --filter web --filter api run build",
     "lint": "pnpm -r --filter web --filter api run lint",
     "test": "pnpm --filter api test",
+    "test:e2e": "pnpm --filter api test:e2e",
     "prisma:generate": "pnpm --filter api prisma:generate",
     "prisma:migrate:dev": "pnpm --filter api prisma:migrate:dev",
     "prisma:seed": "pnpm --filter api prisma:seed"

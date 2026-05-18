@@ -159,7 +159,7 @@ export function UserCharacterForm({
     <form className="space-y-4" onSubmit={onSubmit}>
       <div className="flex flex-col gap-3 md:flex-row">
         <select
-          className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)] md:min-w-96 disabled:cursor-not-allowed disabled:bg-[var(--surface-2)]"
+          className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)] md:min-w-96 disabled:cursor-not-allowed disabled:bg-[var(--surface-2)]"
           value={values.characterId}
           onChange={(event) => onFieldChange('characterId', event.target.value)}
           disabled={disableCharacterSelect}
@@ -212,7 +212,7 @@ export function UserCharacterForm({
           <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
             Cono equipado (opcional)
             <select
-              className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
               value={values.lightConeId}
               onChange={(event) =>
                 onFieldChange('lightConeId', event.target.value)

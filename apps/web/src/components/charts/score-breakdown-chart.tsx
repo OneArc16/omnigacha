@@ -97,9 +97,9 @@ export function ScoreBreakdownChart({ breakdown }: ScoreBreakdownChartProps) {
     <div className="h-72 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 24, right: 12, left: 8, bottom: 12 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ec" />
-          <XAxis dataKey="factor" tick={{ fill: '#475569', fontSize: 12 }} />
-          <YAxis tick={{ fill: '#475569', fontSize: 12 }} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+          <XAxis dataKey="factor" tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
+          <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
           <Tooltip />
           <Bar
             dataKey="value"

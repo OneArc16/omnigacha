@@ -83,7 +83,7 @@ function ContributionTooltip({ active, payload }: ContributionTooltipProps) {
   const delta = point.proposedDamage - point.currentDamage;
 
   return (
-    <div className="rounded-lg border border-[var(--line)] bg-white p-3 text-xs text-[var(--ink-800)] shadow-sm">
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-xs text-[var(--ink-800)] shadow-sm">
       <p className="font-semibold text-[var(--ink-900)]">{point.name}</p>
       <p className="mt-1">
         Rol: <span className="font-medium">{point.role}</span> · Perfil:{' '}
@@ -116,14 +116,14 @@ export function TeamMemberContributionChart({
     <div className="h-80 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 12, right: 12, left: 8, bottom: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ec" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
           <XAxis
             dataKey="shortName"
             interval={0}
-            tick={{ fill: '#475569', fontSize: 12 }}
+            tick={{ fill: 'var(--chart-axis)', fontSize: 12 }}
             tickMargin={10}
           />
-          <YAxis tick={{ fill: '#475569', fontSize: 12 }} />
+          <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
           <Tooltip content={<ContributionTooltip />} />
           <Legend />
           <Bar

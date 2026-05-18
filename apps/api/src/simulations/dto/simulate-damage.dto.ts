@@ -1,4 +1,13 @@
-import { IsInt, IsNumber, Max, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class SimulateDamageDto {
   @IsInt()
@@ -24,4 +33,12 @@ export class SimulateDamageDto {
   @Min(-200)
   @Max(200)
   speedDelta!: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  teammateCharacterIds?: number[];
 }

@@ -1,9 +1,4 @@
-export type TeamRole =
-  | 'dps'
-  | 'sub_dps'
-  | 'support'
-  | 'sustain'
-  | 'unknown';
+export type TeamRole = 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
 
 export type DamageProfile =
   | 'single_target'
@@ -11,6 +6,28 @@ export type DamageProfile =
   | 'dot'
   | 'burst'
   | 'utility';
+
+export type AnalysisOffenseModifiers = {
+  atkPercent: number;
+  critRateFlat: number;
+  critDamageFlat: number;
+  speedFlat: number;
+  dmgBonus: number;
+  dotBonus: number;
+  defIgnore: number;
+  resPen: number;
+};
+
+export const EMPTY_ANALYSIS_OFFENSE_MODIFIERS: AnalysisOffenseModifiers = {
+  atkPercent: 0,
+  critRateFlat: 0,
+  critDamageFlat: 0,
+  speedFlat: 0,
+  dmgBonus: 0,
+  dotBonus: 0,
+  defIgnore: 0,
+  resPen: 0,
+};
 
 export type AnalysisCharacter = {
   id: number;
@@ -21,6 +38,7 @@ export type AnalysisCharacter = {
   critRate: number;
   critDamage: number;
   speed: number;
+  modifiers: AnalysisOffenseModifiers;
 };
 
 export type TeamDamageMember = AnalysisCharacter & {

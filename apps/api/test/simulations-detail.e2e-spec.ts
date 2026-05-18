@@ -12,7 +12,9 @@ import { SimulationsService } from '../src/simulations/simulations.service';
 
 class TestJwtGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<{
+      user?: { sub: number; email: string };
+    }>();
     request.user = {
       sub: 42,
       email: 'test@omnigacha.dev',
@@ -23,6 +25,7 @@ class TestJwtGuard implements CanActivate {
 
 describe('Simulations detail routes (e2e)', () => {
   let app: INestApplication<App>;
+  const httpApp = () => app.getHttpAdapter().getInstance() as App;
 
   const simulationsServiceMock = {
     listRecommendations: jest.fn(),
@@ -74,7 +77,7 @@ describe('Simulations detail routes (e2e)', () => {
       nextCursor: null,
     });
 
-    await request(app.getHttpServer())
+    await request(httpApp())
       .get('/simulations/recommendations?limit=5')
       .expect(200);
 
@@ -97,11 +100,12 @@ describe('Simulations detail routes (e2e)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const response = await request(app.getHttpServer())
+    const response = await request(httpApp())
       .get('/simulations/recommendations/101')
       .expect(200);
 
-    expect(response.body.id).toBe(101);
+    const body = response.body as { id: number };
+    expect(body.id).toBe(101);
     expect(simulationsServiceMock.findRecommendationById).toHaveBeenCalledWith(
       42,
       101,
@@ -121,12 +125,16 @@ describe('Simulations detail routes (e2e)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const response = await request(app.getHttpServer())
+    const response = await request(httpApp())
       .get('/simulations/history/77')
       .expect(200);
 
-    expect(response.body.id).toBe(77);
-    expect(response.body.payload.type).toBe('damage_scenario');
+    const body = response.body as {
+      id: number;
+      payload: { type: string };
+    };
+    expect(body.id).toBe(77);
+    expect(body.payload.type).toBe('damage_scenario');
     expect(simulationsServiceMock.findHistoryById).toHaveBeenCalledWith(42, 77);
   });
 });

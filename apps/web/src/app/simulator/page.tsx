@@ -1,14 +1,22 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Alert } from '../../components/ui/alert';
-import { Button } from '../../components/ui/button';
-import { Card } from '../../components/ui/card';
-import { DamageComparisonChart } from '../../components/charts/damage-comparison-chart';
-import { ScoreBreakdownChart } from '../../components/charts/score-breakdown-chart';
-import { TeamMemberContributionChart } from '../../components/charts/team-member-contribution-chart';
-import { clearAuthTokens, loadAuthTokens } from '../../lib/auth-storage';
+import Link from "next/link";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { ButtonLink } from "../../components/ui/button-link";
+import { Input } from "../../components/ui/input";
+import { SegmentedTabs } from "../../components/ui/segmented-tabs";
+import { Skeleton } from "../../components/ui/skeleton";
+import { WindowPanel } from "../../components/ui/window-panel";
+import { DamageComparisonChart } from "../../components/charts/damage-comparison-chart";
+import { ScoreBreakdownChart } from "../../components/charts/score-breakdown-chart";
+import { TeamMemberContributionChart } from "../../components/charts/team-member-contribution-chart";
+import {
+  clearAuthTokens,
+  useAuthTokens,
+  useHydratedValue,
+} from "../../lib/auth-storage";
 import {
   apiRequest,
   Character,
@@ -18,14 +26,41 @@ import {
   RecommendationResponse,
   SimulationHistoryItem,
   UserCharacter,
-} from '../../lib/api';
+} from "../../lib/api";
+import { toast } from "sonner";
 
 const PAGE_SIZE = 5;
+type SimulatorView = "recommend" | "scenario" | "history";
+
+const SELECT_CLASSNAME =
+  "w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]";
+
+const SIMULATOR_VIEW_OPTIONS = [
+  {
+    value: "recommend",
+    label: "Recomendacion",
+    description: "Define objetivo, stats y resultado sugerido.",
+  },
+  {
+    value: "scenario",
+    label: "Escenarios",
+    description: "Simula cambios reales con equipo manual o auto.",
+  },
+  {
+    value: "history",
+    label: "Historial",
+    description: "Consulta recomendaciones y simulaciones guardadas.",
+  },
+] satisfies {
+  value: SimulatorView;
+  label: string;
+  description: string;
+}[];
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString('es-CO', {
-    dateStyle: 'short',
-    timeStyle: 'short',
+  return new Date(value).toLocaleString("es-CO", {
+    dateStyle: "short",
+    timeStyle: "short",
   });
 }
 
@@ -35,56 +70,109 @@ function asNumber(value: string): number {
 }
 
 function formatSigned(value: number, digits = 2) {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
 }
 
 function formatPercentInput(value: number) {
   return String(Number((value * 100).toFixed(2)));
 }
 
+function levelBadgeVariant(level: RecommendationRecord["level"]) {
+  switch (level) {
+    case "NO_RECOMENDADO":
+      return "danger";
+    case "SITUACIONAL":
+      return "warning";
+    case "RECOMENDADO":
+      return "brand";
+    case "MUY_RECOMENDADO":
+      return "success";
+    default:
+      return "neutral";
+  }
+}
+
+function recommendationTargetStatsSourceLabel(
+  source: NonNullable<
+    RecommendationResponse["context"]["appliedTargetStats"]
+  >["source"],
+) {
+  switch (source) {
+    case "manual":
+      return "manual";
+    case "roster":
+      return "tu roster";
+    case "catalog_base":
+      return "base de catalogo";
+    default:
+      return "desconocida";
+  }
+}
+
+function resolveErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function SimulatorPage() {
-  const [accessToken, setAccessToken] = useState('');
-  const [refreshToken, setRefreshToken] = useState('');
+  const { accessToken, refreshToken } = useAuthTokens();
+  const isAuthHydrated = useHydratedValue();
   const [catalog, setCatalog] = useState<Character[]>([]);
   const [owned, setOwned] = useState<UserCharacter[]>([]);
-  const [targetCharacterId, setTargetCharacterId] = useState<number | null>(null);
+  const [targetCharacterId, setTargetCharacterId] = useState<number | null>(
+    null,
+  );
+  const [useCustomRecommendationStats, setUseCustomRecommendationStats] =
+    useState(false);
+  const [recommendAtkInput, setRecommendAtkInput] = useState("0");
+  const [recommendCritRateInput, setRecommendCritRateInput] = useState("0");
+  const [recommendCritDamageInput, setRecommendCritDamageInput] = useState("0");
+  const [recommendSpeedInput, setRecommendSpeedInput] = useState("0");
   const [result, setResult] = useState<RecommendationResponse | null>(null);
-  const [recommendationHistory, setRecommendationHistory] = useState<RecommendationRecord[]>([]);
-  const [recommendationNextCursor, setRecommendationNextCursor] = useState<number | null>(null);
-  const [simulationHistory, setSimulationHistory] = useState<SimulationHistoryItem[]>([]);
-  const [simulationNextCursor, setSimulationNextCursor] = useState<number | null>(null);
-  const [loadingMoreRecommendations, setLoadingMoreRecommendations] = useState(false);
+  const [recommendationHistory, setRecommendationHistory] = useState<
+    RecommendationRecord[]
+  >([]);
+  const [recommendationNextCursor, setRecommendationNextCursor] = useState<
+    number | null
+  >(null);
+  const [simulationHistory, setSimulationHistory] = useState<
+    SimulationHistoryItem[]
+  >([]);
+  const [simulationNextCursor, setSimulationNextCursor] = useState<
+    number | null
+  >(null);
+  const [loadingMoreRecommendations, setLoadingMoreRecommendations] =
+    useState(false);
   const [loadingMoreSimulations, setLoadingMoreSimulations] = useState(false);
+  const [hasBootstrapped, setHasBootstrapped] = useState(false);
   const [simulatingDamage, setSimulatingDamage] = useState(false);
-  const [error, setError] = useState('');
-  const [status, setStatus] = useState('');
-  const [scenarioCharacterId, setScenarioCharacterId] = useState<number | null>(null);
-  const [atkInput, setAtkInput] = useState('0');
-  const [critRateInput, setCritRateInput] = useState('0');
-  const [critDamageInput, setCritDamageInput] = useState('0');
-  const [speedInput, setSpeedInput] = useState('0');
-  const [damageScenario, setDamageScenario] = useState<DamageScenarioResponse | null>(null);
-  const [recommendationSearch, setRecommendationSearch] = useState('');
+  const [pageError, setPageError] = useState("");
+  const [activeView, setActiveView] = useState<SimulatorView>("recommend");
+  const [scenarioCharacterId, setScenarioCharacterId] = useState<number | null>(
+    null,
+  );
+  const [useCustomTeam, setUseCustomTeam] = useState(false);
+  const [teammateSlots, setTeammateSlots] = useState<string[]>(["", "", ""]);
+  const [atkInput, setAtkInput] = useState("0");
+  const [critRateInput, setCritRateInput] = useState("0");
+  const [critDamageInput, setCritDamageInput] = useState("0");
+  const [speedInput, setSpeedInput] = useState("0");
+  const [damageScenario, setDamageScenario] =
+    useState<DamageScenarioResponse | null>(null);
+  const [recommendationSearch, setRecommendationSearch] = useState("");
   const [recommendationLevelFilter, setRecommendationLevelFilter] = useState<
-    'ALL' | RecommendationRecord['level']
-  >('ALL');
-  const [simulationSearch, setSimulationSearch] = useState('');
+    "ALL" | RecommendationRecord["level"]
+  >("ALL");
+  const [simulationSearch, setSimulationSearch] = useState("");
   const [simulationTypeFilter, setSimulationTypeFilter] = useState<
-    'ALL' | 'recommendation' | 'damage_scenario'
-  >('ALL');
-
-  useEffect(() => {
-    const tokens = loadAuthTokens();
-    setAccessToken(tokens.accessToken);
-    setRefreshToken(tokens.refreshToken);
-  }, []);
+    "ALL" | "recommendation" | "damage_scenario"
+  >("ALL");
 
   useEffect(() => {
     if (!accessToken) return;
 
     Promise.all([
-      apiRequest<CursorPage<Character>>('/characters?limit=100'),
-      apiRequest<CursorPage<UserCharacter>>('/user-characters?limit=100', {
+      apiRequest<CursorPage<Character>>("/characters?limit=100"),
+      apiRequest<CursorPage<UserCharacter>>("/user-characters?limit=100", {
         token: accessToken,
       }),
       apiRequest<CursorPage<RecommendationRecord>>(
@@ -99,13 +187,63 @@ export default function SimulatorPage() {
       .then(([characters, ownedCharacters, recommendations, simulations]) => {
         setCatalog(characters.items);
         setOwned(ownedCharacters.items);
+        setPageError("");
+        const firstEntry = ownedCharacters.items[0] ?? null;
+        setScenarioCharacterId(firstEntry?.character.id ?? null);
+        setTeammateSlots(["", "", ""]);
+        setAtkInput(firstEntry ? String(firstEntry.atk) : "0");
+        setCritRateInput(
+          firstEntry ? formatPercentInput(firstEntry.critRate) : "0",
+        );
+        setCritDamageInput(
+          firstEntry ? formatPercentInput(firstEntry.critDamage) : "0",
+        );
+        setSpeedInput(firstEntry ? String(firstEntry.speed) : "0");
         setRecommendationHistory(recommendations.items);
         setRecommendationNextCursor(recommendations.nextCursor);
         setSimulationHistory(simulations.items);
         setSimulationNextCursor(simulations.nextCursor);
       })
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => {
+        setPageError(err.message);
+        toast.error(err.message);
+      })
+      .finally(() => setHasBootstrapped(true));
   }, [accessToken]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const syncViewFromHash = () => {
+      switch (window.location.hash) {
+        case "#scenario-simulation":
+          setActiveView("scenario");
+          break;
+        case "#recommendation-history":
+        case "#simulation-history":
+        case "#history":
+          setActiveView("history");
+          break;
+        case "#recommend-target":
+        case "#recommendation-result":
+          setActiveView("recommend");
+          break;
+        default:
+          break;
+      }
+    };
+
+    syncViewFromHash();
+    window.addEventListener("hashchange", syncViewFromHash);
+
+    return () => {
+      window.removeEventListener("hashchange", syncViewFromHash);
+    };
+  }, []);
+
+  const isBootstrapping = Boolean(accessToken) && !hasBootstrapped;
 
   const targetCharacter = useMemo(
     () => catalog.find((character) => character.id === targetCharacterId),
@@ -118,36 +256,12 @@ export default function SimulatorPage() {
     [owned, scenarioCharacterId],
   );
 
-  useEffect(() => {
-    if (owned.length === 0) {
-      setScenarioCharacterId(null);
-      setAtkInput('0');
-      setCritRateInput('0');
-      setCritDamageInput('0');
-      setSpeedInput('0');
-      return;
-    }
-
-    const hasSelected = owned.some(
-      (entry) => entry.character.id === scenarioCharacterId,
-    );
-
-    if (!hasSelected) {
-      const nextEntry = owned[0];
-      setScenarioCharacterId(nextEntry.character.id);
-      setAtkInput(String(nextEntry.atk));
-      setCritRateInput(formatPercentInput(nextEntry.critRate));
-      setCritDamageInput(formatPercentInput(nextEntry.critDamage));
-      setSpeedInput(String(nextEntry.speed));
-    }
-  }, [owned, scenarioCharacterId]);
-
   const filteredRecommendationHistory = useMemo(() => {
     const search = recommendationSearch.trim().toLowerCase();
 
     return recommendationHistory.filter((entry) => {
       const matchesLevel =
-        recommendationLevelFilter === 'ALL' ||
+        recommendationLevelFilter === "ALL" ||
         entry.level === recommendationLevelFilter;
 
       const matchesSearch =
@@ -165,12 +279,12 @@ export default function SimulatorPage() {
     return simulationHistory.filter((entry) => {
       const resolvedType =
         entry.payload?.type ??
-        (entry.label.startsWith('damage-sim-')
-          ? 'damage_scenario'
-          : 'recommendation');
+        (entry.label.startsWith("damage-sim-")
+          ? "damage_scenario"
+          : "recommendation");
 
       const matchesType =
-        simulationTypeFilter === 'ALL' || resolvedType === simulationTypeFilter;
+        simulationTypeFilter === "ALL" || resolvedType === simulationTypeFilter;
 
       const matchesSearch =
         search.length === 0 ||
@@ -181,7 +295,29 @@ export default function SimulatorPage() {
     });
   }, [simulationHistory, simulationSearch, simulationTypeFilter]);
 
-  async function loadRecommendationHistory(cursor: number | null, append: boolean) {
+  const availableTeammates = useMemo(
+    () =>
+      owned.filter(
+        (entry) =>
+          scenarioCharacterId === null ||
+          entry.character.id !== scenarioCharacterId,
+      ),
+    [owned, scenarioCharacterId],
+  );
+
+  const selectedTeammateIds = useMemo(
+    () =>
+      teammateSlots
+        .filter((value): value is string => value.length > 0)
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value)),
+    [teammateSlots],
+  );
+
+  async function loadRecommendationHistory(
+    cursor: number | null,
+    append: boolean,
+  ) {
     if (!accessToken) return;
 
     const query = cursor
@@ -209,7 +345,9 @@ export default function SimulatorPage() {
       token: accessToken,
     });
 
-    setSimulationHistory((prev) => (append ? [...prev, ...page.items] : page.items));
+    setSimulationHistory((prev) =>
+      append ? [...prev, ...page.items] : page.items,
+    );
     setSimulationNextCursor(page.nextCursor);
   }
 
@@ -217,29 +355,65 @@ export default function SimulatorPage() {
     event.preventDefault();
     if (!accessToken || !targetCharacterId) return;
 
-    setError('');
-    setStatus('');
+    setPageError("");
 
     try {
+      const body: {
+        targetCharacterId: number;
+        targetStats?: {
+          atk: number;
+          critRate: number;
+          critDamage: number;
+          speed: number;
+        };
+      } = { targetCharacterId };
+
+      if (useCustomRecommendationStats) {
+        const targetAtk = asNumber(recommendAtkInput);
+        const targetCritRatePercent = asNumber(recommendCritRateInput);
+        const targetCritDamagePercent = asNumber(recommendCritDamageInput);
+        const targetSpeed = asNumber(recommendSpeedInput);
+
+        if (
+          targetAtk < 1 ||
+          targetCritRatePercent < 0 ||
+          targetCritRatePercent > 100 ||
+          targetCritDamagePercent < 0 ||
+          targetSpeed < 1
+        ) {
+          throw new Error(
+            "Ingresa stats objetivo validos (ATK/SPD >= 1, CR entre 0 y 100, CD >= 0).",
+          );
+        }
+
+        body.targetStats = {
+          atk: Math.round(targetAtk),
+          critRate: targetCritRatePercent,
+          critDamage: targetCritDamagePercent,
+          speed: Math.round(targetSpeed),
+        };
+      }
+
       const response = await apiRequest<RecommendationResponse>(
-        '/simulations/recommend',
+        "/simulations/recommend",
         {
-          method: 'POST',
+          method: "POST",
           token: accessToken,
-          body: { targetCharacterId },
+          body,
         },
       );
 
       setResult(response);
-      setStatus('Recomendacion generada con el motor ligero.');
+      setActiveView("recommend");
+      toast.success("Recomendacion generada con el motor ligero.");
 
       await Promise.all([
         loadRecommendationHistory(null, false),
         loadSimulationHistory(null, false),
       ]);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible simular la recomendacion',
+      toast.error(
+        resolveErrorMessage(err, "No fue posible simular la recomendacion"),
       );
     }
   }
@@ -248,8 +422,7 @@ export default function SimulatorPage() {
     event.preventDefault();
     if (!accessToken || !scenarioCharacterId || !scenarioCharacterEntry) return;
 
-    setError('');
-    setStatus('');
+    setPageError("");
     setSimulatingDamage(true);
 
     try {
@@ -257,6 +430,7 @@ export default function SimulatorPage() {
       const targetCritRatePercent = asNumber(critRateInput);
       const targetCritDamagePercent = asNumber(critDamageInput);
       const targetSpeed = asNumber(speedInput);
+      const teammateCharacterIds = useCustomTeam ? selectedTeammateIds : [];
 
       if (
         targetAtk < 1 ||
@@ -264,16 +438,24 @@ export default function SimulatorPage() {
         targetCritDamagePercent < 0 ||
         targetSpeed < 1
       ) {
-        throw new Error('Ingresa stats simulados validos (ATK/SPD >= 1, CR/CD >= 0).');
+        throw new Error(
+          "Ingresa stats simulados validos (ATK/SPD >= 1, CR/CD >= 0).",
+        );
+      }
+
+      if (useCustomTeam && teammateCharacterIds.length === 0) {
+        throw new Error(
+          "Selecciona al menos 1 companero para activar el equipo personalizado.",
+        );
       }
 
       const critRateBasePercent = scenarioCharacterEntry.critRate * 100;
       const critDamageBasePercent = scenarioCharacterEntry.critDamage * 100;
 
       const response = await apiRequest<DamageScenarioResponse>(
-        '/simulations/damage',
+        "/simulations/damage",
         {
-          method: 'POST',
+          method: "POST",
           token: accessToken,
           body: {
             characterId: scenarioCharacterId,
@@ -281,20 +463,85 @@ export default function SimulatorPage() {
             critRateDelta: targetCritRatePercent - critRateBasePercent,
             critDamageDelta: targetCritDamagePercent - critDamageBasePercent,
             speedDelta: Math.round(targetSpeed - scenarioCharacterEntry.speed),
+            teammateCharacterIds: teammateCharacterIds.length
+              ? teammateCharacterIds
+              : undefined,
           },
         },
       );
 
       setDamageScenario(response);
-      setStatus('Escenario hipotetico simulado correctamente.');
+      setActiveView("scenario");
+      toast.success("Escenario hipotetico simulado correctamente.");
       await loadSimulationHistory(null, false);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible simular el escenario',
+      toast.error(
+        resolveErrorMessage(err, "No fue posible simular el escenario"),
       );
     } finally {
       setSimulatingDamage(false);
     }
+  }
+
+  function applyRecommendationTargetDefaults(
+    selectedId: number | null,
+    ownedList = owned,
+    catalogList = catalog,
+  ) {
+    if (!selectedId) {
+      setRecommendAtkInput("0");
+      setRecommendCritRateInput("0");
+      setRecommendCritDamageInput("0");
+      setRecommendSpeedInput("0");
+      return;
+    }
+
+    const ownedEntry =
+      ownedList.find((entry) => entry.character.id === selectedId) ?? null;
+    if (ownedEntry) {
+      setRecommendAtkInput(String(ownedEntry.atk));
+      setRecommendCritRateInput(formatPercentInput(ownedEntry.critRate));
+      setRecommendCritDamageInput(formatPercentInput(ownedEntry.critDamage));
+      setRecommendSpeedInput(String(ownedEntry.speed));
+      return;
+    }
+
+    const catalogEntry =
+      catalogList.find((character) => character.id === selectedId) ?? null;
+    if (catalogEntry) {
+      setRecommendAtkInput(String(catalogEntry.baseAtk));
+      setRecommendCritRateInput(formatPercentInput(catalogEntry.baseCritRate));
+      setRecommendCritDamageInput(
+        formatPercentInput(catalogEntry.baseCritDamage),
+      );
+      setRecommendSpeedInput(String(catalogEntry.baseSpeed));
+      return;
+    }
+
+    setRecommendAtkInput("0");
+    setRecommendCritRateInput("0");
+    setRecommendCritDamageInput("0");
+    setRecommendSpeedInput("0");
+  }
+
+  function handleTeammateSlotChange(slotIndex: number, value: string) {
+    setPageError("");
+
+    if (
+      value &&
+      teammateSlots.some(
+        (slotValue, index) => index !== slotIndex && slotValue === value,
+      )
+    ) {
+      toast.error("No repitas companeros dentro del mismo equipo.");
+      return;
+    }
+
+    setTeammateSlots((current) =>
+      current.map((slotValue, index) =>
+        index === slotIndex ? value : slotValue,
+      ),
+    );
   }
 
   async function handleLoadMoreRecommendations() {
@@ -304,8 +551,11 @@ export default function SimulatorPage() {
     try {
       await loadRecommendationHistory(recommendationNextCursor, true);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible cargar mas recomendaciones',
+      toast.error(
+        resolveErrorMessage(
+          err,
+          "No fue posible cargar mas recomendaciones",
+        ),
       );
     } finally {
       setLoadingMoreRecommendations(false);
@@ -319,8 +569,8 @@ export default function SimulatorPage() {
     try {
       await loadSimulationHistory(simulationNextCursor, true);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible cargar mas simulaciones',
+      toast.error(
+        resolveErrorMessage(err, "No fue posible cargar mas simulaciones"),
       );
     } finally {
       setLoadingMoreSimulations(false);
@@ -330,546 +580,1276 @@ export default function SimulatorPage() {
   async function handleLogout() {
     try {
       if (refreshToken) {
-        await apiRequest('/auth/logout', {
-          method: 'POST',
+        await apiRequest("/auth/logout", {
+          method: "POST",
           body: { refreshToken },
         });
       }
+      toast.success("Sesion cerrada.");
     } finally {
       clearAuthTokens();
-      setAccessToken('');
-      setRefreshToken('');
     }
+  }
+
+  if (!isAuthHydrated) {
+    return (
+      <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_18%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_82%_2%,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
+
+        <WindowPanel
+          title="Simulator Lab"
+          subtitle="Preparando el entorno de simulacion."
+          action={<Badge variant="neutral">Inicializando</Badge>}
+        >
+          <div className="grid gap-4 lg:grid-cols-[0.94fr_1.06fr]">
+            <div className="space-y-3">
+              <Skeleton className="h-6 w-32 rounded-full" />
+              <Skeleton className="h-14 w-full rounded-3xl" />
+              <Skeleton className="h-24 w-full rounded-3xl" />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Skeleton className="h-28 w-full rounded-3xl" />
+              <Skeleton className="h-28 w-full rounded-3xl" />
+              <Skeleton className="h-28 w-full rounded-3xl sm:col-span-2" />
+            </div>
+          </div>
+        </WindowPanel>
+      </main>
+    );
   }
 
   if (!accessToken) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
-        <Card title="Simulador OmniGacha" subtitle="Necesitas iniciar sesion para usar la recomendacion.">
-          <Link className="text-sm font-semibold text-[var(--brand-700)] hover:underline" href="/">
-            Volver al inicio y autenticarme
-          </Link>
-        </Card>
+      <main className="relative mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[24rem] bg-[radial-gradient(circle_at_20%_10%,rgba(34,193,238,0.18),transparent_42%),linear-gradient(180deg,rgba(6,10,21,0.38),transparent)]" />
+
+        <WindowPanel
+          title="Simulator Lab"
+          subtitle="Necesitas iniciar sesion para acceder al motor de recomendacion."
+          action={<Badge variant="warning">Acceso requerido</Badge>}
+        >
+          <div className="space-y-4">
+            <p className="max-w-2xl text-sm leading-7 text-[var(--ink-600)]">
+              El simulador usa tu roster, tus historiales y tus stats
+              persistidos. Por eso lo protegemos dentro de la sesion.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <ButtonLink href="/">Volver al workspace</ButtonLink>
+              <ButtonLink href="/" variant="ghost">
+                Ir a login
+              </ButtonLink>
+            </div>
+          </div>
+        </WindowPanel>
+      </main>
+    );
+  }
+
+  if (isBootstrapping) {
+    return (
+      <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_16%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_76%_2%,rgba(14,165,233,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
+
+        <WindowPanel
+          title="Simulator Lab"
+          subtitle="Cargando catalogo, roster, recomendaciones e historial."
+          action={<Badge variant="brand">Sync</Badge>}
+        >
+          <div className="grid gap-6 xl:grid-cols-[0.86fr_1.14fr]">
+            <div className="space-y-3">
+              <Skeleton className="h-9 w-40 rounded-full" />
+              <Skeleton className="h-12 w-full rounded-2xl" />
+              <Skeleton className="h-12 w-full rounded-2xl" />
+              <Skeleton className="h-40 w-full rounded-[28px]" />
+            </div>
+            <div className="space-y-3">
+              <Skeleton className="h-16 w-full rounded-3xl" />
+              <Skeleton className="h-[34rem] w-full rounded-[28px]" />
+            </div>
+          </div>
+        </WindowPanel>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6">
-      <Card title="Simulador de Recomendacion" subtitle="Base del motor de IA ligera para conveniencia de pull.">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <Link className="font-semibold text-[var(--brand-700)] hover:underline" href="/">
-            Volver al panel principal
-          </Link>
-          <Button variant="ghost" onClick={handleLogout}>
-            Cerrar sesion
-          </Button>
-        </div>
-      </Card>
+    <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[30rem] bg-[radial-gradient(circle_at_14%_18%,rgba(34,193,238,0.24),transparent_42%),radial-gradient(circle_at_84%_2%,rgba(14,165,233,0.15),transparent_34%),radial-gradient(circle_at_50%_0%,rgba(2,132,199,0.08),transparent_38%),linear-gradient(180deg,rgba(6,10,21,0.46),transparent)]" />
 
-      {error ? <Alert tone="error">{error}</Alert> : null}
-      {status ? <Alert tone="success">{status}</Alert> : null}
-
-      <Card title="1. Elegir objetivo" subtitle="Selecciona el personaje que quieres analizar.">
-        <form className="flex flex-col gap-3 md:flex-row" onSubmit={handleRecommend}>
-          <select
-            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-            value={targetCharacterId ?? ''}
-            onChange={(event) =>
-              setTargetCharacterId(
-                event.target.value ? Number(event.target.value) : null,
-              )
-            }
-            required
-          >
-            <option value="">Selecciona un personaje</option>
-            {catalog.map((character) => (
-              <option key={character.id} value={character.id}>
-                {character.name} - {character.element} / {character.path}
-              </option>
-            ))}
-          </select>
-          <Button type="submit">Simular recomendacion</Button>
-        </form>
-      </Card>
-
-      <Card title="2. Tu roster actual" subtitle={`Personajes registrados: ${owned.length}`}>
-        {owned.length === 0 ? (
-          <p className="text-sm text-[var(--ink-500)]">No tienes personajes registrados aun.</p>
-        ) : (
-          <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {owned.map((entry) => (
-              <li key={entry.id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm">
-                <p className="font-semibold text-[var(--ink-900)]">{entry.character.name}</p>
-                <p className="text-[var(--ink-500)]">
-                  {entry.character.element} / {entry.character.path}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="3. Simulacion de escenarios" subtitle="Ajusta stats para evaluar un caso hipotetico en tu cuenta.">
-        {owned.length === 0 ? (
-          <p className="text-sm text-[var(--ink-500)]">
-            Agrega personajes a tu cuenta para habilitar simulaciones de stats.
-          </p>
-        ) : (
-          <form className="space-y-3" onSubmit={handleSimulateDamage}>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                  Personaje a simular
-                </p>
-                <select
-                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-                  value={scenarioCharacterId ?? ''}
-                  onChange={(event) => {
-                    const selectedId = event.target.value
-                      ? Number(event.target.value)
-                      : null;
-                    setScenarioCharacterId(selectedId);
-
-                    const selectedEntry =
-                      selectedId === null
-                        ? null
-                        : owned.find((entry) => entry.character.id === selectedId) ?? null;
-
-                    if (!selectedEntry) {
-                      setAtkInput('0');
-                      setCritRateInput('0');
-                      setCritDamageInput('0');
-                      setSpeedInput('0');
-                      return;
-                    }
-
-                    setAtkInput(String(selectedEntry.atk));
-                    setCritRateInput(formatPercentInput(selectedEntry.critRate));
-                    setCritDamageInput(formatPercentInput(selectedEntry.critDamage));
-                    setSpeedInput(String(selectedEntry.speed));
-                  }}
-                  required
-                >
-                  <option value="">Selecciona un personaje</option>
-                  {owned.map((entry) => (
-                    <option key={entry.id} value={entry.character.id}>
-                      {entry.character.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs text-[var(--ink-700)]">
-                <p className="font-semibold text-[var(--ink-900)]">Como funciona la simulacion</p>
-                <p className="mt-1">
-                  Ingresa los stats finales objetivo (no incrementos).
-                </p>
-                <p>
-                  El sistema convierte internamente esos valores a cambios y recalcula el dano con formula multiplicativa (Base DMG, DMG%, DEF, RES, DMG Taken y Toughness).
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">ATK simulado</p>
-                <input
-                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-                  type="number"
-                  step={1}
-                  min={1}
-                  max={99999}
-                  value={atkInput}
-                  onChange={(event) => setAtkInput(event.target.value)}
-                />
-              </div>
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">CRIT Rate simulado (%)</p>
-                <input
-                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-                  type="number"
-                  step={0.1}
-                  min={0}
-                  max={100}
-                  value={critRateInput}
-                  onChange={(event) => setCritRateInput(event.target.value)}
-                />
-              </div>
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">CRIT DMG simulado (%)</p>
-                <input
-                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-                  type="number"
-                  step={0.1}
-                  min={0}
-                  max={999}
-                  value={critDamageInput}
-                  onChange={(event) => setCritDamageInput(event.target.value)}
-                />
-              </div>
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">SPD simulado</p>
-                <input
-                  className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-                  type="number"
-                  step={1}
-                  min={1}
-                  max={999}
-                  value={speedInput}
-                  onChange={(event) => setSpeedInput(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <Button type="submit" disabled={simulatingDamage || !scenarioCharacterId || !scenarioCharacterEntry}>
-              {simulatingDamage ? 'Simulando...' : 'Simular escenario'}
+      <WindowPanel
+        title="Simulator Lab"
+        subtitle="Motor ligero para recomendacion de pulls y simulacion de dano con contexto de equipo."
+        action={
+          <div className="flex flex-wrap gap-2">
+            <ButtonLink href="/" variant="ghost">
+              Workspace
+            </ButtonLink>
+            <Button variant="ghost" onClick={handleLogout}>
+              Cerrar sesion
             </Button>
-          </form>
-        )}
+          </div>
+        }
+      >
+        <div className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+          <div className="space-y-4">
+            <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
+              Analysis deck
+            </div>
+            <h1 className="max-w-3xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
+              Recomendaciones y escenarios en ventanas activas, no en una
+              pagina interminable.
+            </h1>
+            <p className="max-w-2xl text-base leading-7 text-[var(--ink-600)]">
+              Compactamos el simulador para que puedas fijar objetivo, ajustar
+              stats, comparar resultados y revisar historiales sin perder el
+              contexto cada vez que cambias de tarea.
+            </p>
 
-        {damageScenario ? (
-          <div className="mt-4 space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-            <p className="text-sm font-semibold text-[var(--ink-900)]">{damageScenario.summary}</p>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">Sinergias filtradas</Badge>
+              <Badge variant="outline">Stats manuales</Badge>
+              <Badge variant="outline">Equipo personalizado</Badge>
+              <Badge variant="outline">Toasts en tiempo real</Badge>
+            </div>
+          </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats base</p>
-                <p className="mt-1 text-[var(--ink-700)]">
-                  ATK {damageScenario.baseStats.atk} · CR{' '}
-                  {Math.round(damageScenario.baseStats.critRate * 100)}% · CD{' '}
-                  {Math.round(damageScenario.baseStats.critDamage * 100)}% · SPD{' '}
-                  {damageScenario.baseStats.speed}
-                </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]/85 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-500)]">
+                Roster
+              </p>
+              <p className="mt-2 text-3xl font-black text-[var(--ink-900)]">
+                {owned.length}
+              </p>
+              <p className="mt-1 text-sm text-[var(--ink-600)]">
+                personajes disponibles para simulacion.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]/85 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-500)]">
+                Historial
+              </p>
+              <p className="mt-2 text-3xl font-black text-[var(--ink-900)]">
+                {recommendationHistory.length + simulationHistory.length}
+              </p>
+              <p className="mt-1 text-sm text-[var(--ink-600)]">
+                registros cargados en la sesion actual.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]/85 p-4 sm:col-span-2">
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-500)]">
+                Cambios rapidos
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <Button
+                  type="button"
+                  variant={activeView === "recommend" ? "primary" : "ghost"}
+                  onClick={() => setActiveView("recommend")}
+                >
+                  Recomendacion
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeView === "scenario" ? "primary" : "ghost"}
+                  onClick={() => setActiveView("scenario")}
+                >
+                  Escenario
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeView === "history" ? "primary" : "ghost"}
+                  onClick={() => setActiveView("history")}
+                >
+                  Historial
+                </Button>
               </div>
-              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats simuladas</p>
-                <p className="mt-1 text-[var(--ink-700)]">
-                  ATK {damageScenario.simulatedStats.atk} · CR{' '}
-                  {Math.round(damageScenario.simulatedStats.critRate * 100)}% · CD{' '}
-                  {Math.round(damageScenario.simulatedStats.critDamage * 100)}% · SPD{' '}
-                  {damageScenario.simulatedStats.speed}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano base</p>
-                <p className="mt-1 font-semibold text-[var(--ink-900)]">
-                  {damageScenario.baseTeamDamage.toFixed(2)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano simulado</p>
-                <p className="mt-1 font-semibold text-[var(--ink-900)]">
-                  {damageScenario.simulatedTeamDamage.toFixed(2)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-[var(--line)] bg-white/80 p-3 text-sm">
-                <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Delta</p>
-                <p className={`mt-1 font-semibold ${damageScenario.deltaPercent >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {formatSigned(damageScenario.deltaPercent)}%
-                </p>
-              </div>
-            </div>
-
-            <DamageComparisonChart
-              currentTotal={damageScenario.baseTeamDamage}
-              proposedTotal={damageScenario.simulatedTeamDamage}
-              currentLabel="Base"
-              proposedLabel="Simulado"
-              seriesName="Dano de escenario"
-              helpTextByLabel={{
-                Base: 'Base: dano estimado del equipo antes de aplicar tus cambios de stats.',
-                Simulado: 'Simulado: dano estimado luego de aplicar los deltas del escenario.',
-              }}
-            />
-          </div>
-        ) : null}
-      </Card>
-
-      {result ? (
-        <Card
-          title="4. Resultado de la recomendacion"
-          subtitle={targetCharacter ? `Objetivo: ${targetCharacter.name}` : 'Resultado generado'}
-        >
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Score</p>
-              <p className="mt-1 text-2xl font-bold text-[var(--ink-900)]">
-                {result.recommendation.score}/100
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Nivel</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {result.recommendation.level}
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Delta estimado</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {result.recommendation.estimatedDeltaDmg}%
-              </p>
             </div>
           </div>
+        </div>
+      </WindowPanel>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano equipo actual</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {result.context.damageComparison.currentTeam.totalDamage.toFixed(2)}
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano equipo propuesto</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {result.context.damageComparison.proposedTeam.totalDamage.toFixed(2)}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <DamageComparisonChart
-              currentTotal={result.context.damageComparison.currentTeam.totalDamage}
-              proposedTotal={result.context.damageComparison.proposedTeam.totalDamage}
-            />
-            <ScoreBreakdownChart breakdown={result.context.scoringBreakdown} />
-          </div>
-
-          <div className="mt-3">
-            <TeamMemberContributionChart
-              currentMembers={result.context.damageComparison.currentTeam.members}
-              proposedMembers={result.context.damageComparison.proposedTeam.members}
-            />
-          </div>
-
-          <div className="mt-3 grid gap-3 lg:grid-cols-3">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                Eje inferior - Grafica de dano
-              </p>
-              <p className="mt-1 text-sm text-[var(--ink-700)]">
-                <span className="font-semibold">Actual:</span> dano estimado de tu mejor equipo actual.
-              </p>
-              <p className="text-sm text-[var(--ink-700)]">
-                <span className="font-semibold">Propuesto:</span> dano estimado del equipo al incluir el personaje objetivo.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                Eje inferior - Grafica de score
-              </p>
-              <p className="mt-1 text-sm text-[var(--ink-700)]">
-                <span className="font-semibold">Base:</span> puntaje inicial.
-                {' '}<span className="font-semibold">Sinergia:</span> impacto de compatibilidades.
-                {' '}<span className="font-semibold">Dano:</span> impacto del delta de dano.
-              </p>
-              <p className="text-sm text-[var(--ink-700)]">
-                <span className="font-semibold">Rol:</span> bonus por necesidad de rol.
-                {' '}<span className="font-semibold">Perfil:</span> balance ST/AoE/DoT/Burst.
-                {' '}<span className="font-semibold">Penalizacion:</span> descuento si ya lo tienes.
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                Eje inferior - Contribucion por miembro
-              </p>
-              <p className="mt-1 text-sm text-[var(--ink-700)]">
-                Cada etiqueta representa un personaje del equipo propuesto final (maximo 4).
-              </p>
-              <p className="text-sm text-[var(--ink-700)]">
-                Se comparan dos barras por personaje:{' '}
-                <span className="font-semibold">Equipo actual</span> vs{' '}
-                <span className="font-semibold">Equipo propuesto</span>.
-              </p>
-            </div>
-          </div>
-
-          <p className="mt-4 text-sm text-[var(--ink-700)]">{result.recommendation.explanation}</p>
-
-          <div className="mt-4">
-            <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Top sinergias detectadas</p>
-            {result.context.topSynergies.length === 0 ? (
-              <p className="mt-1 text-sm text-[var(--ink-500)]">Sin sinergias directas detectadas.</p>
-            ) : (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--ink-700)]">
-                {result.context.topSynergies.map((synergy) => (
-                  <li key={synergy}>{synergy}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
+      {pageError ? (
+        <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {pageError}
+        </div>
       ) : null}
 
-      <Card title="5. Historial de recomendaciones" subtitle="Recomendaciones recientes generadas en tu cuenta.">
-        <div className="mb-3 grid gap-3 md:grid-cols-2">
-          <input
-            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-            placeholder="Buscar por personaje o explicacion"
-            value={recommendationSearch}
-            onChange={(event) => setRecommendationSearch(event.target.value)}
-          />
-          <select
-            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-            value={recommendationLevelFilter}
-            onChange={(event) =>
-              setRecommendationLevelFilter(
-                event.target.value as
-                  | 'ALL'
-                  | 'NO_RECOMENDADO'
-                  | 'SITUACIONAL'
-                  | 'RECOMENDADO'
-                  | 'MUY_RECOMENDADO',
+      <SegmentedTabs
+        value={activeView}
+        onValueChange={setActiveView}
+        options={SIMULATOR_VIEW_OPTIONS}
+      />
+
+      {activeView === "recommend" ? (
+        <section
+          id="recommend-target"
+          className="grid items-start gap-6 xl:grid-cols-[0.82fr_1.18fr]"
+        >
+          <div className="space-y-6">
+            <WindowPanel
+              title="Objetivo de recomendacion"
+              subtitle="Selecciona el personaje y decide si quieres fijar stats manuales para evitar recomendaciones sesgadas."
+              action={
+                targetCharacter ? (
+                  <Badge variant="brand">{targetCharacter.name}</Badge>
+                ) : (
+                  <Badge variant="neutral">Sin objetivo</Badge>
+                )
+              }
+            >
+              <form className="space-y-4" onSubmit={handleRecommend}>
+                <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                  <select
+                    className={SELECT_CLASSNAME}
+                    value={targetCharacterId ?? ""}
+                    onChange={(event) => {
+                      const nextTargetId = event.target.value
+                        ? Number(event.target.value)
+                        : null;
+                      setTargetCharacterId(nextTargetId);
+                      applyRecommendationTargetDefaults(nextTargetId);
+                    }}
+                    required
+                  >
+                    <option value="">Selecciona un personaje</option>
+                    {catalog.map((character) => (
+                      <option key={character.id} value={character.id}>
+                        {character.name} - {character.element} /{" "}
+                        {character.path}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="submit"
+                    disabled={!targetCharacterId || catalog.length === 0}
+                  >
+                    Simular recomendacion
+                  </Button>
+                </div>
+
+                {targetCharacter ? (
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="brand">{targetCharacter.element}</Badge>
+                      <Badge variant="outline">{targetCharacter.path}</Badge>
+                      <Badge variant="neutral">{targetCharacter.role}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm text-[var(--ink-600)]">
+                      Base actual del catalogo: ATK {targetCharacter.baseAtk} ·
+                      CR {(targetCharacter.baseCritRate * 100).toFixed(1)}% · CD{" "}
+                      {(targetCharacter.baseCritDamage * 100).toFixed(1)}% · SPD{" "}
+                      {targetCharacter.baseSpeed}
+                    </p>
+                  </div>
+                ) : null}
+
+                {catalog.length === 0 ? (
+                  <p className="text-sm text-[var(--ink-500)]">
+                    No hay personajes disponibles en catalogo. Verifica la
+                    carga del API o el seed.
+                  </p>
+                ) : null}
+
+                <label className="flex items-center gap-2 text-sm text-[var(--ink-700)]">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[var(--brand-500)]"
+                    checked={useCustomRecommendationStats}
+                    onChange={(event) =>
+                      setUseCustomRecommendationStats(
+                        event.currentTarget.checked,
+                      )
+                    }
+                  />
+                  Usar stats personalizados para esta recomendacion
+                </label>
+
+                {useCustomRecommendationStats ? (
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                          ATK objetivo
+                        </label>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={recommendAtkInput}
+                          onChange={(event) =>
+                            setRecommendAtkInput(event.target.value)
+                          }
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                          CR objetivo (%)
+                        </label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={recommendCritRateInput}
+                          onChange={(event) =>
+                            setRecommendCritRateInput(event.target.value)
+                          }
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                          CD objetivo (%)
+                        </label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={recommendCritDamageInput}
+                          onChange={(event) =>
+                            setRecommendCritDamageInput(event.target.value)
+                          }
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                          SPD objetivo
+                        </label>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={recommendSpeedInput}
+                          onChange={(event) =>
+                            setRecommendSpeedInput(event.target.value)
+                          }
+                          required
+                        />
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-[var(--ink-500)]">
+                      Si el personaje ya existe en tu roster, estos valores
+                      sobreescriben solo esta simulacion. No se guardan.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)]/70 p-4 text-sm text-[var(--ink-500)]">
+                    Si no activas stats manuales, el motor prioriza los stats
+                    del roster y, si no existen, cae al catalogo base.
+                  </div>
+                )}
+              </form>
+            </WindowPanel>
+
+            <WindowPanel
+              title="Roster detectado"
+              subtitle="El objetivo y la sinergia se calculan sobre estos personajes registrados."
+              action={
+                <Badge variant="neutral">
+                  {owned.length} disponible{owned.length === 1 ? "" : "s"}
+                </Badge>
+              }
+            >
+              {owned.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
+                  No tienes personajes registrados aun en tu cuenta principal.
+                </div>
+              ) : (
+                <div className="max-h-[36rem] space-y-3 overflow-y-auto pr-1">
+                  {owned.map((entry) => (
+                    <article
+                      key={entry.id}
+                      className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[var(--ink-900)]">
+                            {entry.character.name}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <Badge variant="brand">
+                              {entry.character.element}
+                            </Badge>
+                            <Badge variant="outline">
+                              {entry.character.path}
+                            </Badge>
+                          </div>
+                        </div>
+                        {targetCharacterId === entry.character.id ? (
+                          <Badge variant="success">Objetivo actual</Badge>
+                        ) : null}
+                      </div>
+                      <p className="mt-3 text-xs text-[var(--ink-500)]">
+                        LVL {entry.level} · E{entry.eidolon} · ATK {entry.atk} ·
+                        CR {Math.round(entry.critRate * 100)}% · CD{" "}
+                        {Math.round(entry.critDamage * 100)}% · SPD{" "}
+                        {entry.speed}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </WindowPanel>
+          </div>
+
+          <WindowPanel
+            title="Resultado de recomendacion"
+            subtitle={
+              targetCharacter
+                ? `Analisis activo sobre ${targetCharacter.name}.`
+                : "Genera una recomendacion para abrir el tablero analitico."
+            }
+            action={
+              result ? (
+                <Badge variant={levelBadgeVariant(result.recommendation.level)}>
+                  {result.recommendation.level}
+                </Badge>
+              ) : (
+                <Badge variant="neutral">Esperando simulacion</Badge>
               )
             }
           >
-            <option value="ALL">Todos los niveles</option>
-            <option value="NO_RECOMENDADO">NO_RECOMENDADO</option>
-            <option value="SITUACIONAL">SITUACIONAL</option>
-            <option value="RECOMENDADO">RECOMENDADO</option>
-            <option value="MUY_RECOMENDADO">MUY_RECOMENDADO</option>
-          </select>
-        </div>
-
-        {recommendationHistory.length === 0 ? (
-          <p className="text-sm text-[var(--ink-500)]">Aun no hay recomendaciones guardadas.</p>
-        ) : (
-          <>
-            {filteredRecommendationHistory.length === 0 ? (
-              <p className="text-sm text-[var(--ink-500)]">
-                No hay resultados con los filtros actuales.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {filteredRecommendationHistory.map((entry) => (
-                <li key={entry.id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-[var(--ink-900)]">
-                      {entry.targetCharacter} · {entry.level} · {entry.score}/100
+            {!result ? (
+              <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
+                <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-5">
+                  <p className="text-sm font-semibold text-[var(--ink-900)]">
+                    Aun no hay recomendacion generada
+                  </p>
+                  <p className="mt-2 text-sm leading-7 text-[var(--ink-600)]">
+                    Elige un objetivo, decide si usar stats manuales y ejecuta
+                    la simulacion. El sistema comparara sinergia, dano,
+                    necesidad de rol y balance del equipo.
+                  </p>
+                </div>
+                <div className="grid gap-3">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      1. Objetivo
                     </p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
-                      <Link
-                        className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
-                        href={`/simulator/recommendations/${entry.id}`}
-                      >
-                        Ver detalle
-                      </Link>
-                    </div>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      Selecciona el personaje que quieres evaluar.
+                    </p>
                   </div>
-                  <p className="mt-1 text-sm text-[var(--ink-600)]">{entry.explanation}</p>
-                </li>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      2. Contexto
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      Ajusta stats manuales si buscas un build objetivo real.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      3. Resultado
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      Obtendras score, delta de dano, graficas y top sinergias.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-[78vh] space-y-4 overflow-y-auto pr-1">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Score
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-[var(--ink-900)]">
+                      {result.recommendation.score}/100
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Nivel
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-[var(--ink-900)]">
+                      {result.recommendation.level}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Delta estimado
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-[var(--ink-900)]">
+                      {result.recommendation.estimatedDeltaDmg}%
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Dano equipo actual
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
+                      {result.context.damageComparison.currentTeam.totalDamage.toFixed(
+                        2,
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Dano equipo propuesto
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
+                      {result.context.damageComparison.proposedTeam.totalDamage.toFixed(
+                        2,
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {result.context.appliedTargetStats ? (
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm text-[var(--ink-700)]">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Stats objetivo usados en la simulacion
+                    </p>
+                    <p className="mt-2">
+                      ATK {result.context.appliedTargetStats.atk} · CR{" "}
+                      {(
+                        result.context.appliedTargetStats.critRate * 100
+                      ).toFixed(1)}
+                      % · CD{" "}
+                      {(
+                        result.context.appliedTargetStats.critDamage * 100
+                      ).toFixed(1)}
+                      % · SPD {result.context.appliedTargetStats.speed}
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--ink-500)]">
+                      Fuente:{" "}
+                      {recommendationTargetStatsSourceLabel(
+                        result.context.appliedTargetStats.source,
+                      )}
+                      .
+                    </p>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <DamageComparisonChart
+                    currentTotal={
+                      result.context.damageComparison.currentTeam.totalDamage
+                    }
+                    proposedTotal={
+                      result.context.damageComparison.proposedTeam.totalDamage
+                    }
+                  />
+                  <ScoreBreakdownChart
+                    breakdown={result.context.scoringBreakdown}
+                  />
+                </div>
+
+                <TeamMemberContributionChart
+                  currentMembers={result.context.damageComparison.currentTeam.members}
+                  proposedMembers={
+                    result.context.damageComparison.proposedTeam.members
+                  }
+                />
+
+                <div className="grid gap-3 xl:grid-cols-3">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      Eje inferior - grafica de dano
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      <span className="font-semibold">Actual:</span> dano
+                      estimado de tu mejor equipo actual.
+                    </p>
+                    <p className="text-sm text-[var(--ink-700)]">
+                      <span className="font-semibold">Propuesto:</span> dano
+                      estimado al incluir el personaje objetivo.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      Eje inferior - grafica de score
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      <span className="font-semibold">Base:</span> puntaje
+                      inicial. <span className="font-semibold">Sinergia:</span>{" "}
+                      compatibilidades.{" "}
+                      <span className="font-semibold">Dano:</span> impacto del
+                      delta.
+                    </p>
+                    <p className="text-sm text-[var(--ink-700)]">
+                      <span className="font-semibold">Rol:</span> necesidad del
+                      equipo. <span className="font-semibold">Perfil:</span>{" "}
+                      balance ST/AoE/DoT/Burst.{" "}
+                      <span className="font-semibold">Penalizacion:</span>{" "}
+                      descuento por ownership.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      Eje inferior - contribucion por miembro
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      Cada etiqueta representa un personaje del equipo final
+                      considerado por el motor.
+                    </p>
+                    <p className="text-sm text-[var(--ink-700)]">
+                      Se comparan barras de{" "}
+                      <span className="font-semibold">equipo actual</span> vs{" "}
+                      <span className="font-semibold">equipo propuesto</span>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                  <p className="text-sm leading-7 text-[var(--ink-700)]">
+                    {result.recommendation.explanation}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                    Top sinergias detectadas
+                  </p>
+                  {result.context.topSynergies.length === 0 ? (
+                    <p className="mt-2 text-sm text-[var(--ink-500)]">
+                      Sin sinergias directas detectadas.
+                    </p>
+                  ) : (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--ink-700)]">
+                      {result.context.topSynergies.map((synergy) => (
+                        <li key={synergy}>{synergy}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+          </WindowPanel>
+        </section>
+      ) : null}
+
+      {activeView === "scenario" ? (
+        <section
+          id="scenario-simulation"
+          className="grid items-start gap-6 xl:grid-cols-[0.84fr_1.16fr]"
+        >
+          <WindowPanel
+            title="Escenario controlado"
+            subtitle="Simula stats finales y deja que el backend los convierta a deltas reales con contexto de equipo."
+            action={
+              scenarioCharacterEntry ? (
+                <Badge variant="brand">
+                  {scenarioCharacterEntry.character.name}
+                </Badge>
+              ) : (
+                <Badge variant="neutral">Sin personaje</Badge>
+              )
+            }
+          >
+            {owned.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
+                Agrega personajes a tu cuenta para habilitar simulaciones de
+                stats.
+              </div>
+            ) : (
+              <form
+                className="max-h-[78vh] space-y-4 overflow-y-auto pr-1"
+                onSubmit={handleSimulateDamage}
+              >
+                <div className="grid gap-4 xl:grid-cols-[1fr_0.96fr]">
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      Personaje a simular
+                    </p>
+                    <select
+                      className={SELECT_CLASSNAME}
+                      value={scenarioCharacterId ?? ""}
+                      onChange={(event) => {
+                        const selectedId = event.target.value
+                          ? Number(event.target.value)
+                          : null;
+                        setScenarioCharacterId(selectedId);
+                        setTeammateSlots((current) =>
+                          current.map((slotValue) =>
+                            selectedId !== null &&
+                            slotValue === String(selectedId)
+                              ? ""
+                              : slotValue,
+                          ),
+                        );
+
+                        const selectedEntry =
+                          selectedId === null
+                            ? null
+                            : (owned.find(
+                                (entry) => entry.character.id === selectedId,
+                              ) ?? null);
+
+                        if (!selectedEntry) {
+                          setAtkInput("0");
+                          setCritRateInput("0");
+                          setCritDamageInput("0");
+                          setSpeedInput("0");
+                          return;
+                        }
+
+                        setAtkInput(String(selectedEntry.atk));
+                        setCritRateInput(
+                          formatPercentInput(selectedEntry.critRate),
+                        );
+                        setCritDamageInput(
+                          formatPercentInput(selectedEntry.critDamage),
+                        );
+                        setSpeedInput(String(selectedEntry.speed));
+                      }}
+                      required
+                    >
+                      <option value="">Selecciona un personaje</option>
+                      {owned.map((entry) => (
+                        <option key={entry.id} value={entry.character.id}>
+                          {entry.character.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs text-[var(--ink-700)]">
+                    <p className="font-semibold text-[var(--ink-900)]">
+                      Como funciona la simulacion
+                    </p>
+                    <p className="mt-2">
+                      Ingresa los stats finales objetivo, no incrementos.
+                    </p>
+                    <p>
+                      El sistema convierte esos valores a cambios y recalcula el
+                      dano con formula multiplicativa: Base DMG, DMG%, DEF, RES,
+                      DMG Taken y Toughness.
+                    </p>
+                    <p className="mt-2">
+                      Puedes usar equipo automatico o forzar companeros para
+                      reflejar buffs y debuffs reales.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-[var(--ink-800)]">
+                    <input
+                      className="h-4 w-4 accent-[var(--brand-600)]"
+                      type="checkbox"
+                      checked={useCustomTeam}
+                      onChange={(event) =>
+                        setUseCustomTeam(event.target.checked)
+                      }
+                    />
+                    Usar equipo personalizado para la simulacion
+                  </label>
+                  <p className="mt-2 text-xs text-[var(--ink-500)]">
+                    Si no lo activas, se usa seleccion automatica del equipo.
+                  </p>
+                  <p className="text-xs text-[var(--ink-500)]">
+                    Si eliges solo 1-2 companeros, el backend autocompleta hasta
+                    4 miembros priorizando sinergia.
+                  </p>
+
+                  {useCustomTeam ? (
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      {teammateSlots.map((slotValue, index) => (
+                        <div key={`teammate-slot-${index}`}>
+                          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                            Companero {index + 1}
+                          </p>
+                          <select
+                            className={SELECT_CLASSNAME}
+                            value={slotValue}
+                            onChange={(event) =>
+                              handleTeammateSlotChange(
+                                index,
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option value="">Sin seleccionar</option>
+                            {availableTeammates
+                              .filter((entry) => {
+                                if (!slotValue) {
+                                  return !teammateSlots.includes(
+                                    String(entry.character.id),
+                                  );
+                                }
+
+                                return (
+                                  entry.character.id === Number(slotValue) ||
+                                  !teammateSlots.includes(
+                                    String(entry.character.id),
+                                  )
+                                );
+                              })
+                              .map((entry) => (
+                                <option key={entry.id} value={entry.character.id}>
+                                  {entry.character.name}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      ATK simulado
+                    </p>
+                    <Input
+                      type="number"
+                      step={1}
+                      min={1}
+                      max={99999}
+                      value={atkInput}
+                      onChange={(event) => setAtkInput(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      CRIT Rate simulado (%)
+                    </p>
+                    <Input
+                      type="number"
+                      step={0.1}
+                      min={0}
+                      max={100}
+                      value={critRateInput}
+                      onChange={(event) => setCritRateInput(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      CRIT DMG simulado (%)
+                    </p>
+                    <Input
+                      type="number"
+                      step={0.1}
+                      min={0}
+                      max={999}
+                      value={critDamageInput}
+                      onChange={(event) =>
+                        setCritDamageInput(event.target.value)
+                      }
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                      SPD simulado
+                    </p>
+                    <Input
+                      type="number"
+                      step={1}
+                      min={1}
+                      max={999}
+                      value={speedInput}
+                      onChange={(event) => setSpeedInput(event.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={
+                    simulatingDamage ||
+                    !scenarioCharacterId ||
+                    !scenarioCharacterEntry
+                  }
+                >
+                  {simulatingDamage ? "Simulando..." : "Simular escenario"}
+                </Button>
+              </form>
+            )}
+          </WindowPanel>
+
+          <WindowPanel
+            title="Salida del simulador"
+            subtitle={
+              damageScenario
+                ? damageScenario.summary
+                : "Ejecuta una simulacion para ver dano base, dano ajustado y contribucion por miembro."
+            }
+            action={
+              damageScenario ? (
+                <Badge
+                  variant={
+                    damageScenario.deltaPercent >= 0 ? "success" : "danger"
+                  }
+                >
+                  {formatSigned(damageScenario.deltaPercent)}%
+                </Badge>
+              ) : (
+                <Badge variant="neutral">Sin resultado</Badge>
+              )
+            }
+          >
+            {!damageScenario ? (
+              <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
+                <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-5">
+                  <p className="text-sm font-semibold text-[var(--ink-900)]">
+                    El panel espera un escenario
+                  </p>
+                  <p className="mt-2 text-sm leading-7 text-[var(--ink-600)]">
+                    Selecciona un personaje, fija el equipo si lo necesitas y
+                    define los stats finales para medir el impacto real sobre tu
+                    composicion.
+                  </p>
+                </div>
+                <div className="grid gap-3">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Formula real
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      El backend recalcula el dano con factores
+                      multiplicativos, no con suma lineal.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Equipo
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--ink-700)]">
+                      Puedes mantener auto-team o fijar companeros concretos.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-[78vh] space-y-4 overflow-y-auto pr-1">
+                {damageScenario.teamContext ? (
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm text-[var(--ink-600)]">
+                    Equipo{" "}
+                    {damageScenario.teamContext.mode === "custom"
+                      ? "personalizado"
+                      : "automatico"}
+                    :{" "}
+                    {damageScenario.teamContext.members
+                      .map((member) =>
+                        member.isTarget
+                          ? `${member.name} (objetivo)`
+                          : member.name,
+                      )
+                      .join(", ")}
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Stats base
+                    </p>
+                    <p className="mt-2 text-[var(--ink-700)]">
+                      ATK {damageScenario.baseStats.atk} · CR{" "}
+                      {Math.round(damageScenario.baseStats.critRate * 100)}% ·
+                      CD{" "}
+                      {Math.round(damageScenario.baseStats.critDamage * 100)}% ·
+                      SPD {damageScenario.baseStats.speed}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Stats simuladas
+                    </p>
+                    <p className="mt-2 text-[var(--ink-700)]">
+                      ATK {damageScenario.simulatedStats.atk} · CR{" "}
+                      {Math.round(damageScenario.simulatedStats.critRate * 100)}
+                      % · CD{" "}
+                      {Math.round(
+                        damageScenario.simulatedStats.critDamage * 100,
+                      )}
+                      % · SPD {damageScenario.simulatedStats.speed}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Dano base
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
+                      {damageScenario.baseTeamDamage.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Dano simulado
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
+                      {damageScenario.simulatedTeamDamage.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
+                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
+                      Delta
+                    </p>
+                    <p
+                      className={`mt-2 text-lg font-semibold ${
+                        damageScenario.deltaPercent >= 0
+                          ? "text-emerald-300"
+                          : "text-rose-300"
+                      }`}
+                    >
+                      {formatSigned(damageScenario.deltaPercent)}%
+                    </p>
+                  </div>
+                </div>
+
+                <DamageComparisonChart
+                  currentTotal={damageScenario.baseTeamDamage}
+                  proposedTotal={damageScenario.simulatedTeamDamage}
+                  currentLabel="Base"
+                  proposedLabel="Simulado"
+                  seriesName="Dano de escenario"
+                  helpTextByLabel={{
+                    Base: "Base: dano estimado del equipo antes de aplicar tus cambios de stats.",
+                    Simulado:
+                      "Simulado: dano estimado luego de aplicar los deltas del escenario.",
+                  }}
+                />
+
+                <TeamMemberContributionChart
+                  currentMembers={
+                    damageScenario.damageComparison.currentTeam.members
+                  }
+                  proposedMembers={
+                    damageScenario.damageComparison.proposedTeam.members
+                  }
+                />
+              </div>
+            )}
+          </WindowPanel>
+        </section>
+      ) : null}
+
+      {activeView === "history" ? (
+        <section id="history" className="grid items-start gap-6 xl:grid-cols-2">
+          <WindowPanel
+            title="Historial de recomendaciones"
+            subtitle="Resultado reciente de decisiones de pull guardadas en tu cuenta."
+            action={
+              <Badge variant="neutral">
+                {filteredRecommendationHistory.length}/{recommendationHistory.length}
+              </Badge>
+            }
+          >
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                placeholder="Buscar por personaje o explicacion"
+                value={recommendationSearch}
+                onChange={(event) =>
+                  setRecommendationSearch(event.target.value)
+                }
+              />
+              <select
+                className={SELECT_CLASSNAME}
+                value={recommendationLevelFilter}
+                onChange={(event) =>
+                  setRecommendationLevelFilter(
+                    event.target.value as
+                      | "ALL"
+                      | "NO_RECOMENDADO"
+                      | "SITUACIONAL"
+                      | "RECOMENDADO"
+                      | "MUY_RECOMENDADO",
+                  )
+                }
+              >
+                <option value="ALL">Todos los niveles</option>
+                <option value="NO_RECOMENDADO">NO_RECOMENDADO</option>
+                <option value="SITUACIONAL">SITUACIONAL</option>
+                <option value="RECOMENDADO">RECOMENDADO</option>
+                <option value="MUY_RECOMENDADO">MUY_RECOMENDADO</option>
+              </select>
+            </div>
+
+            {recommendationHistory.length === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
+                Aun no hay recomendaciones guardadas.
+              </div>
+            ) : filteredRecommendationHistory.length === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
+                No hay resultados con los filtros actuales.
+              </div>
+            ) : (
+              <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-1">
+                {filteredRecommendationHistory.map((entry) => (
+                  <article
+                    key={entry.id}
+                    className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-[var(--ink-900)]">
+                          {entry.targetCharacter} · {entry.score}/100
+                        </p>
+                        <Badge variant={levelBadgeVariant(entry.level)}>
+                          {entry.level}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-[var(--ink-500)]">
+                          {formatDate(entry.createdAt)}
+                        </p>
+                        <Link
+                          className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
+                          href={`/simulator/recommendations/${entry.id}`}
+                        >
+                          Ver detalle
+                        </Link>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-[var(--ink-600)]">
+                      {entry.explanation}
+                    </p>
+                  </article>
                 ))}
-              </ul>
+              </div>
             )}
 
             {recommendationNextCursor ? (
-              <div className="mt-3">
+              <div className="mt-4">
                 <Button
                   variant="ghost"
                   type="button"
                   onClick={handleLoadMoreRecommendations}
                   disabled={loadingMoreRecommendations}
                 >
-                  {loadingMoreRecommendations ? 'Cargando...' : 'Cargar mas recomendaciones'}
+                  {loadingMoreRecommendations
+                    ? "Cargando..."
+                    : "Cargar mas recomendaciones"}
                 </Button>
               </div>
             ) : null}
-          </>
-        )}
-      </Card>
+          </WindowPanel>
 
-      <Card title="6. Historial de simulaciones" subtitle="Ejecuciones guardadas del motor ligero.">
-        <div className="mb-3 grid gap-3 md:grid-cols-2">
-          <input
-            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-            placeholder="Buscar por etiqueta o personaje"
-            value={simulationSearch}
-            onChange={(event) => setSimulationSearch(event.target.value)}
-          />
-          <select
-            className="w-full rounded-xl border border-[var(--line)] bg-white/90 px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
-            value={simulationTypeFilter}
-            onChange={(event) =>
-              setSimulationTypeFilter(
-                event.target.value as 'ALL' | 'recommendation' | 'damage_scenario',
-              )
+          <WindowPanel
+            title="Historial de simulaciones"
+            subtitle="Ejecuciones guardadas del motor ligero con filtros por tipo."
+            action={
+              <Badge variant="neutral">
+                {filteredSimulationHistory.length}/{simulationHistory.length}
+              </Badge>
             }
           >
-            <option value="ALL">Todos los tipos</option>
-            <option value="recommendation">recommendation</option>
-            <option value="damage_scenario">damage_scenario</option>
-          </select>
-        </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                placeholder="Buscar por etiqueta o personaje"
+                value={simulationSearch}
+                onChange={(event) => setSimulationSearch(event.target.value)}
+              />
+              <select
+                className={SELECT_CLASSNAME}
+                value={simulationTypeFilter}
+                onChange={(event) =>
+                  setSimulationTypeFilter(
+                    event.target.value as
+                      | "ALL"
+                      | "recommendation"
+                      | "damage_scenario",
+                  )
+                }
+              >
+                <option value="ALL">Todos los tipos</option>
+                <option value="recommendation">recommendation</option>
+                <option value="damage_scenario">damage_scenario</option>
+              </select>
+            </div>
 
-        {simulationHistory.length === 0 ? (
-          <p className="text-sm text-[var(--ink-500)]">Aun no hay simulaciones guardadas.</p>
-        ) : (
-          <>
-            {filteredSimulationHistory.length === 0 ? (
-              <p className="text-sm text-[var(--ink-500)]">
+            {simulationHistory.length === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
+                Aun no hay simulaciones guardadas.
+              </div>
+            ) : filteredSimulationHistory.length === 0 ? (
+              <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
                 No hay simulaciones que coincidan con los filtros.
-              </p>
+              </div>
             ) : (
-              <ul className="space-y-2">
+              <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-1">
                 {filteredSimulationHistory.map((entry) => (
-                <li key={entry.id} className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-[var(--ink-900)]">{entry.label}</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-[var(--ink-500)]">{formatDate(entry.createdAt)}</p>
-                      <Link
-                        className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
-                        href={`/simulator/history/${entry.id}`}
-                      >
-                        Ver detalle
-                      </Link>
+                  <article
+                    key={entry.id}
+                    className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <p className="text-sm font-semibold text-[var(--ink-900)]">
+                          {entry.label}
+                        </p>
+                        <Badge
+                          variant={
+                            entry.payload?.type === "damage_scenario"
+                              ? "brand"
+                              : "neutral"
+                          }
+                        >
+                          {entry.payload?.type ?? "recommendation"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-[var(--ink-500)]">
+                          {formatDate(entry.createdAt)}
+                        </p>
+                        <Link
+                          className="inline-flex items-center rounded-xl bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--brand-700)] ring-1 ring-[var(--line)] hover:bg-[var(--surface-2)]"
+                          href={`/simulator/history/${entry.id}`}
+                        >
+                          Ver detalle
+                        </Link>
+                      </div>
                     </div>
-                  </div>
-                  {entry.payload?.type === 'damage_scenario' || entry.label.startsWith('damage-sim-') ? (
-                    <p className="mt-1 text-xs text-[var(--ink-600)]">
-                      Personaje: {entry.payload?.characterName ?? 'N/A'} · Dano base:{' '}
-                      {typeof entry.payload?.baseTeamDamage === 'number'
-                        ? entry.payload.baseTeamDamage.toFixed(2)
-                        : 'N/A'}{' '}
-                      · Dano simulado:{' '}
-                      {typeof entry.payload?.simulatedTeamDamage === 'number'
-                        ? entry.payload.simulatedTeamDamage.toFixed(2)
-                        : 'N/A'}{' '}
-                      · Delta:{' '}
-                      {typeof entry.payload?.deltaPercent === 'number'
-                        ? formatSigned(entry.payload.deltaPercent)
-                        : 'N/A'}
-                      %
-                    </p>
-                  ) : (
-                    <p className="mt-1 text-xs text-[var(--ink-600)]">
-                      Score: {entry.payload?.score ?? 'N/A'} · Nivel: {entry.payload?.level ?? 'N/A'} · Sinergias: {entry.payload?.synergyCount ?? 0}
-                    </p>
-                  )}
-                </li>
+                    {entry.payload?.type === "damage_scenario" ||
+                    entry.label.startsWith("damage-sim-") ? (
+                      <p className="mt-2 text-xs leading-6 text-[var(--ink-600)]">
+                        Personaje: {entry.payload?.characterName ?? "N/A"} ·
+                        Dano base:{" "}
+                        {typeof entry.payload?.baseTeamDamage === "number"
+                          ? entry.payload.baseTeamDamage.toFixed(2)
+                          : "N/A"}{" "}
+                        · Dano simulado:{" "}
+                        {typeof entry.payload?.simulatedTeamDamage === "number"
+                          ? entry.payload.simulatedTeamDamage.toFixed(2)
+                          : "N/A"}{" "}
+                        · Delta:{" "}
+                        {typeof entry.payload?.deltaPercent === "number"
+                          ? formatSigned(entry.payload.deltaPercent)
+                          : "N/A"}
+                        %
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-xs leading-6 text-[var(--ink-600)]">
+                        Score: {entry.payload?.score ?? "N/A"} · Nivel:{" "}
+                        {entry.payload?.level ?? "N/A"} · Sinergias:{" "}
+                        {entry.payload?.synergyCount ?? 0}
+                      </p>
+                    )}
+                  </article>
                 ))}
-              </ul>
+              </div>
             )}
 
             {simulationNextCursor ? (
-              <div className="mt-3">
+              <div className="mt-4">
                 <Button
                   variant="ghost"
                   type="button"
                   onClick={handleLoadMoreSimulations}
                   disabled={loadingMoreSimulations}
                 >
-                  {loadingMoreSimulations ? 'Cargando...' : 'Cargar mas simulaciones'}
+                  {loadingMoreSimulations
+                    ? "Cargando..."
+                    : "Cargar mas simulaciones"}
                 </Button>
               </div>
             ) : null}
-          </>
-        )}
-      </Card>
+          </WindowPanel>
+        </section>
+      ) : null}
     </main>
   );
 }

@@ -1,22 +1,31 @@
 'use client';
 
-import Link from 'next/link';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { z } from 'zod';
 import {
   UserCharacterForm,
   type UserCharacterFormValues,
 } from '../components/characters/user-character-form';
-import { Alert } from '../components/ui/alert';
+import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { ButtonLink } from '../components/ui/button-link';
 import { Input } from '../components/ui/input';
-import { clearAuthTokens, loadAuthTokens, saveAuthTokens } from '../lib/auth-storage';
+import { SegmentedTabs } from '../components/ui/segmented-tabs';
+import { Skeleton } from '../components/ui/skeleton';
+import { WindowPanel } from '../components/ui/window-panel';
+import {
+  clearAuthTokens,
+  saveAuthTokens,
+  useAuthTokens,
+  useHydratedValue,
+} from '../lib/auth-storage';
 import {
   apiRequest,
   AuthResponse,
   Character,
   CursorPage,
+  DashboardSummaryResponse,
   LightCone,
   UserCharacter,
 } from '../lib/api';
@@ -54,6 +63,29 @@ type UserCharacterMutationPayload = {
   lightConeId: number | null;
   lightConeLevel: number | null;
 };
+
+type RecommendationLevel =
+  NonNullable<DashboardSummaryResponse['lastRecommendation']>['recommendation'];
+
+type AuthView = 'login' | 'register' | 'security';
+type WorkspaceView = 'overview' | 'roster' | 'account';
+
+function recommendationLevelToBadgeVariant(
+  level: RecommendationLevel,
+): 'neutral' | 'danger' | 'warning' | 'brand' | 'success' {
+  switch (level) {
+    case 'NO_RECOMENDADO':
+      return 'danger';
+    case 'SITUACIONAL':
+      return 'warning';
+    case 'RECOMENDADO':
+      return 'brand';
+    case 'MUY_RECOMENDADO':
+      return 'success';
+    default:
+      return 'neutral';
+  }
+}
 
 function buildCreateCharacterFormValues(
   character: Character | null,
@@ -168,17 +200,19 @@ function buildUserCharacterPayload(
   return payload;
 }
 
+function resolveErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function Home() {
-  const [accessToken, setAccessToken] = useState<string>(
-    () => loadAuthTokens().accessToken,
-  );
-  const [refreshToken, setRefreshToken] = useState<string>(
-    () => loadAuthTokens().refreshToken,
-  );
+  const { accessToken, refreshToken } = useAuthTokens();
+  const isAuthHydrated = useHydratedValue();
   const [me, setMe] = useState<Me | null>(null);
   const [catalog, setCatalog] = useState<Character[]>([]);
   const [lightCones, setLightCones] = useState<LightCone[]>([]);
   const [myCharacters, setMyCharacters] = useState<UserCharacter[]>([]);
+  const [dashboardSummary, setDashboardSummary] =
+    useState<DashboardSummaryResponse | null>(null);
   const [createForm, setCreateForm] = useState<UserCharacterFormValues>(
     buildCreateCharacterFormValues(null),
   );
@@ -192,19 +226,19 @@ export default function Home() {
   const [deletingCharacterId, setDeletingCharacterId] = useState<number | null>(
     null,
   );
-  const [status, setStatus] = useState<string>('');
-  const [error, setError] = useState<string>('');
-  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [pageError, setPageError] = useState<string>('');
+  const [authView, setAuthView] = useState<AuthView>('login');
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('overview');
 
   function handleLocalLogout() {
-    setAccessToken('');
-    setRefreshToken('');
     setMe(null);
     setMyCharacters([]);
+    setDashboardSummary(null);
     setCreateForm(buildCreateCharacterFormValues(null));
     setUseManualStats(false);
     setEditingCharacterId(null);
     setEditingForm(null);
+    setWorkspaceView('overview');
     clearAuthTokens();
   }
 
@@ -216,26 +250,38 @@ export default function Home() {
       .then(([characterPage, lightConePage]) => {
         setCatalog(characterPage.items);
         setLightCones(lightConePage.items);
+        setPageError('');
       })
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => {
+        setPageError(err.message);
+        toast.error(err.message);
+      });
   }, []);
 
   useEffect(() => {
+    if (!isAuthHydrated) {
+      return;
+    }
+
     if (!accessToken) return;
 
     Promise.all([
       apiRequest<Me>('/auth/me', { token: accessToken }),
       loadOwnedCharacters(accessToken),
+      loadDashboardSummary(accessToken),
     ])
-      .then(([profile, owned]) => {
+      .then(([profile, owned, summary]) => {
         setMe(profile);
         setMyCharacters(owned.items);
+        setDashboardSummary(summary);
+        setPageError('');
       })
       .catch((err: Error) => {
-        setError(err.message);
+        setPageError(err.message);
+        toast.error(err.message);
         handleLocalLogout();
       });
-  }, [accessToken]);
+  }, [accessToken, isAuthHydrated]);
 
   const selectedCharacter = useMemo(
     () =>
@@ -256,10 +302,22 @@ export default function Home() {
     });
   }
 
+  async function loadDashboardSummary(token: string) {
+    return apiRequest<DashboardSummaryResponse>('/dashboard/summary', {
+      token,
+    });
+  }
+
   async function refreshOwnedCharacters(token = accessToken) {
     if (!token) return;
     const refreshed = await loadOwnedCharacters(token);
     setMyCharacters(refreshed.items);
+  }
+
+  async function refreshDashboardSummary(token = accessToken) {
+    if (!token) return;
+    const summary = await loadDashboardSummary(token);
+    setDashboardSummary(summary);
   }
 
   function handleCreateFormFieldChange(
@@ -322,10 +380,10 @@ export default function Home() {
     mode: 'register' | 'login',
   ) {
     event.preventDefault();
-    setError('');
-    setStatus('');
+    setPageError('');
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const payload = {
       name: String(formData.get('name') ?? ''),
       email: String(formData.get('email') ?? ''),
@@ -344,18 +402,16 @@ export default function Home() {
         body: parsed,
       });
 
-      setAccessToken(response.accessToken);
-      setRefreshToken(response.refreshToken);
       saveAuthTokens({
         accessToken: response.accessToken,
         refreshToken: response.refreshToken,
       });
-      setStatus(
+      toast.success(
         mode === 'register' ? 'Cuenta creada con exito.' : 'Sesion iniciada.',
       );
-      event.currentTarget.reset();
+      form.reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No fue posible autenticar');
+      toast.error(resolveErrorMessage(err, 'No fue posible autenticar'));
     }
   }
 
@@ -363,8 +419,7 @@ export default function Home() {
     event.preventDefault();
     if (!accessToken || !selectedCharacter) return;
 
-    setError('');
-    setStatus('');
+    setPageError('');
     setIsCreatingCharacter(true);
 
     try {
@@ -376,14 +431,13 @@ export default function Home() {
         body: payload,
       });
 
-      await refreshOwnedCharacters();
+      await Promise.all([refreshOwnedCharacters(), refreshDashboardSummary()]);
       setCreateForm(buildCreateCharacterFormValues(selectedCharacter));
       setUseManualStats(false);
-      setStatus(`${selectedCharacter.name} agregado a tu cuenta.`);
+      setWorkspaceView('roster');
+      toast.success(`${selectedCharacter.name} agregado a tu cuenta.`);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible agregar personaje',
-      );
+      toast.error(resolveErrorMessage(err, 'No fue posible agregar personaje'));
     } finally {
       setIsCreatingCharacter(false);
     }
@@ -393,8 +447,7 @@ export default function Home() {
     event.preventDefault();
     if (!accessToken || !editingCharacterId || !editingForm || !editingEntry) return;
 
-    setError('');
-    setStatus('');
+    setPageError('');
     setIsUpdatingCharacter(true);
 
     try {
@@ -405,13 +458,16 @@ export default function Home() {
         body: payload,
       });
 
-      await refreshOwnedCharacters();
+      await Promise.all([refreshOwnedCharacters(), refreshDashboardSummary()]);
       setEditingCharacterId(null);
       setEditingForm(null);
-      setStatus(`${editingEntry.character.name} fue actualizado correctamente.`);
+      setWorkspaceView('roster');
+      toast.success(
+        `${editingEntry.character.name} fue actualizado correctamente.`,
+      );
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible actualizar personaje',
+      toast.error(
+        resolveErrorMessage(err, 'No fue posible actualizar personaje'),
       );
     } finally {
       setIsUpdatingCharacter(false);
@@ -421,6 +477,7 @@ export default function Home() {
   function startEditingCharacter(entry: UserCharacter) {
     setEditingCharacterId(entry.id);
     setEditingForm(buildEditCharacterFormValues(entry, lightCones));
+    setWorkspaceView('roster');
   }
 
   function cancelEditingCharacter() {
@@ -439,8 +496,7 @@ export default function Home() {
       return;
     }
 
-    setError('');
-    setStatus('');
+    setPageError('');
     setDeletingCharacterId(entry.id);
 
     try {
@@ -449,17 +505,15 @@ export default function Home() {
         token: accessToken,
       });
 
-      await refreshOwnedCharacters();
+      await Promise.all([refreshOwnedCharacters(), refreshDashboardSummary()]);
 
       if (editingCharacterId === entry.id) {
         cancelEditingCharacter();
       }
 
-      setStatus(`${entry.character.name} fue eliminado de tu cuenta.`);
+      toast.success(`${entry.character.name} fue eliminado de tu cuenta.`);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'No fue posible eliminar personaje',
-      );
+      toast.error(resolveErrorMessage(err, 'No fue posible eliminar personaje'));
     } finally {
       setDeletingCharacterId(null);
     }
@@ -467,10 +521,10 @@ export default function Home() {
 
   async function handleChangePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError('');
-    setStatus('');
+    setPageError('');
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const payload = {
       email: String(formData.get('email') ?? ''),
       newPassword: String(formData.get('newPassword') ?? ''),
@@ -486,16 +540,14 @@ export default function Home() {
         },
       );
 
-      setStatus(
+      toast.success(
         'Contrasena actualizada. Inicia sesion con tu nueva contrasena.',
       );
-      setShowChangePassword(false);
-      event.currentTarget.reset();
+      setAuthView('login');
+      form.reset();
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'No fue posible cambiar la contrasena',
+      toast.error(
+        resolveErrorMessage(err, 'No fue posible cambiar la contrasena'),
       );
     }
   }
@@ -508,229 +560,549 @@ export default function Home() {
           body: { refreshToken },
         });
       }
+      toast.success('Sesion cerrada.');
     } finally {
       handleLocalLogout();
     }
   }
 
+  const authOptions = [
+    {
+      value: 'login',
+      label: 'Entrar',
+      description: 'Accede rapido a tu workspace.',
+    },
+    {
+      value: 'register',
+      label: 'Crear cuenta',
+      description: 'Empieza desde cero sin pasos extra.',
+    },
+    {
+      value: 'security',
+      label: 'Recuperar acceso',
+      description: 'Actualiza la contrasena por correo.',
+    },
+  ] satisfies {
+    value: AuthView;
+    label: string;
+    description: string;
+  }[];
+
+  const workspaceOptions = [
+    {
+      value: 'overview',
+      label: 'Resumen',
+      description: 'Vista rapida del estado de tu cuenta.',
+    },
+    {
+      value: 'roster',
+      label: 'Roster',
+      description: 'Agregar, editar y ordenar personajes.',
+    },
+    {
+      value: 'account',
+      label: 'Cuenta',
+      description: 'Perfil, seguridad y cierre de sesion.',
+    },
+  ] satisfies {
+    value: WorkspaceView;
+    label: string;
+    description: string;
+  }[];
+
   return (
-    <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 py-10 sm:px-6">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-[radial-gradient(circle_at_20%_20%,rgba(14,165,233,0.2),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(234,88,12,0.2),transparent_40%)]" />
+    <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_15%_20%,rgba(34,193,238,0.22),transparent_42%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.4),transparent)]" />
 
-      <Card
-        className="border-[var(--line-strong)]"
-        title="OmniGacha"
-        subtitle="Decisiones inteligentes para tus pulls en Honkai: Star Rail"
+      <WindowPanel
+        title="OmniGacha Workspace"
+        subtitle="Decisiones inteligentes para tus pulls sin perderte en hojas de calculo."
+        action={<Badge variant="brand">MVP activo</Badge>}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-[var(--ink-600)]">
-            MVP activo: autenticacion segura, catalogo base y gestion de personajes.
-          </p>
-          <Link className="text-sm font-semibold text-[var(--brand-700)] hover:underline" href="/simulator">
-            Ir al simulador de recomendacion
-          </Link>
-        </div>
-      </Card>
-
-      {error ? <Alert tone="error">{error}</Alert> : null}
-      {status ? <Alert tone="success">{status}</Alert> : null}
-
-      {!accessToken ? (
-        <section className="grid gap-5 lg:grid-cols-2">
-          <Card title="Crear cuenta" subtitle="Empieza tu perfil OmniGacha.">
-            <form
-              className="space-y-3"
-              onSubmit={(event) => handleAuthSubmit(event, 'register')}
-            >
-              <Input name="name" placeholder="Nombre" required />
-              <Input name="email" type="email" placeholder="Correo" required />
-              <Input
-                name="password"
-                type="password"
-                placeholder="Contrasena (8+)"
-                required
-              />
-              <Button type="submit">Registrarme</Button>
-            </form>
-          </Card>
-
-          <Card title="Iniciar sesion" subtitle="Continua donde lo dejaste.">
-            <form
-              className="space-y-3"
-              onSubmit={(event) => handleAuthSubmit(event, 'login')}
-            >
-              <Input name="email" type="email" placeholder="Correo" required />
-              <Input
-                name="password"
-                type="password"
-                placeholder="Contrasena"
-                required
-              />
-              <Button type="submit">Entrar</Button>
-            </form>
-
-            <div className="mt-4 border-t border-[var(--line)] pt-3">
-              <button
-                className="text-sm font-semibold text-[var(--brand-700)] hover:underline"
-                type="button"
-                onClick={() => setShowChangePassword((prev) => !prev)}
-              >
-                {showChangePassword
-                  ? 'Ocultar cambio de contrasena'
-                  : 'Cambiar contrasena'}
-              </button>
-
-              {showChangePassword ? (
-                <form
-                  className="mt-3 space-y-3"
-                  onSubmit={handleChangePasswordSubmit}
-                >
-                  <Input
-                    name="email"
-                    type="email"
-                    placeholder="Correo de tu cuenta"
-                    required
-                  />
-                  <Input
-                    name="newPassword"
-                    type="password"
-                    placeholder="Nueva contrasena (8+)"
-                    required
-                  />
-                  <Button type="submit" variant="ghost">
-                    Actualizar contrasena
-                  </Button>
-                </form>
-              ) : null}
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="space-y-4">
+            <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
+              Control room
             </div>
-          </Card>
-        </section>
-      ) : (
-        <>
-          <Card className="border-[var(--line-strong)]">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-[var(--ink-900)]">
-                  Bienvenido{me ? `, ${me.name}` : ''}
-                </h2>
-                <p className="text-sm text-[var(--ink-500)]">{me?.email}</p>
+            <h1 className="max-w-2xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
+              Planea tu roster, evalua pulls y simula dano desde una sola mesa
+              de trabajo.
+            </h1>
+          </div>
+
+          {!isAuthHydrated ? (
+            <div className="rounded-[26px] border border-[var(--line)] bg-[var(--surface)]/90 p-5">
+              <div className="space-y-3">
+                <Skeleton className="h-8 w-36 rounded-full" />
+                <Skeleton className="h-12 w-full rounded-2xl" />
+                <Skeleton className="h-12 w-full rounded-2xl" />
+                <Skeleton className="h-40 w-full rounded-[22px]" />
               </div>
-              <div className="flex items-center gap-3">
-                <Link className="text-sm font-semibold text-[var(--brand-700)] hover:underline" href="/simulator">
-                  Simulador
-                </Link>
-                <Button variant="ghost" type="button" onClick={handleLogout}>
+            </div>
+          ) : !accessToken ? (
+            <div className="rounded-[26px] border border-[var(--line)] bg-[var(--surface)]/90 p-5">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
+                    Acceso
+                  </p>
+                  <h2 className="mt-2 text-2xl font-bold text-[var(--ink-900)]">
+                    Entra a tu workspace
+                  </h2>
+                </div>
+
+                <SegmentedTabs
+                  value={authView}
+                  onValueChange={setAuthView}
+                  options={authOptions}
+                />
+
+                {pageError ? (
+                  <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-3 text-sm text-rose-200">
+                    {pageError}
+                  </div>
+                ) : null}
+
+                {authView === 'register' ? (
+                  <form
+                    className="space-y-3"
+                    onSubmit={(event) => handleAuthSubmit(event, 'register')}
+                  >
+                    <Input name="name" placeholder="Nombre" required />
+                    <Input
+                      name="email"
+                      type="email"
+                      placeholder="Correo"
+                      required
+                    />
+                    <Input
+                      name="password"
+                      type="password"
+                      placeholder="Contrasena (8+)"
+                      required
+                    />
+                    <Button type="submit" className="w-full">
+                      Crear cuenta
+                    </Button>
+                  </form>
+                ) : null}
+
+                {authView === 'login' ? (
+                  <form
+                    className="space-y-3"
+                    onSubmit={(event) => handleAuthSubmit(event, 'login')}
+                  >
+                    <Input
+                      name="email"
+                      type="email"
+                      placeholder="Correo"
+                      required
+                    />
+                    <Input
+                      name="password"
+                      type="password"
+                      placeholder="Contrasena"
+                      required
+                    />
+                    <Button type="submit" className="w-full">
+                      Iniciar sesion
+                    </Button>
+                  </form>
+                ) : null}
+
+                {authView === 'security' ? (
+                  <form
+                    className="space-y-3"
+                    onSubmit={handleChangePasswordSubmit}
+                  >
+                    <Input
+                      name="email"
+                      type="email"
+                      placeholder="Correo de tu cuenta"
+                      required
+                    />
+                    <Input
+                      name="newPassword"
+                      type="password"
+                      placeholder="Nueva contrasena (8+)"
+                      required
+                    />
+                    <Button type="submit" variant="ghost" className="w-full">
+                      Actualizar contrasena
+                    </Button>
+                  </form>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[26px] border border-[var(--line)] bg-[var(--surface)]/90 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
+                Sesion activa
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-[var(--ink-900)]">
+                {me ? `${me.name}, tu mesa esta lista.` : 'Tu cuenta esta lista.'}
+              </h2>
+              <p className="mt-1 text-sm text-[var(--ink-600)]">
+                Usa las ventanas de abajo para editar el roster, revisar el
+                dashboard o saltar al simulador sin salir del flujo.
+              </p>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <ButtonLink href="/simulator" className="w-full">
+                  Abrir simulador
+                </ButtonLink>
+                <Button variant="ghost" className="w-full" onClick={handleLogout}>
                   Cerrar sesion
                 </Button>
               </div>
+
+              <div className="mt-5 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-500)]">
+                  Cuenta
+                </p>
+                <p className="mt-2 text-base font-semibold text-[var(--ink-900)]">
+                  {me?.email}
+                </p>
+                <p className="mt-1 text-sm text-[var(--ink-600)]">
+                  Ultimo score visible:{' '}
+                  {dashboardSummary?.lastRecommendation?.score ?? 'sin datos'}.
+                </p>
+              </div>
             </div>
-          </Card>
+          )}
+        </div>
+      </WindowPanel>
 
-          <Card
-            title="Agregar personaje"
-            subtitle="Toma uno del catalogo base y agregalo a tu cuenta."
-          >
-            <UserCharacterForm
-              catalog={catalog}
-              lightCones={lightCones}
-              values={createForm}
-              onSubmit={handleCreateCharacter}
-              onFieldChange={handleCreateFormFieldChange}
-              submitLabel="Agregar a mi cuenta"
-              isSubmitting={isCreatingCharacter}
-              showManualToggle
-              useManualStats={useManualStats}
-              onUseManualStatsChange={handleManualStatsToggle}
-              characterPath={selectedCharacter?.path ?? null}
-            />
-          </Card>
+      {!isAuthHydrated || !accessToken ? null : (
+        <>
+          <SegmentedTabs
+            value={workspaceView}
+            onValueChange={setWorkspaceView}
+            options={workspaceOptions}
+          />
 
-          {editingEntry && editingForm ? (
-            <Card
-              title={`Editar personaje: ${editingEntry.character.name}`}
-              subtitle="Actualiza los stats guardados en tu cuenta."
-            >
-              <UserCharacterForm
-                catalog={catalog}
-                lightCones={lightCones}
-                values={editingForm}
-                onSubmit={handleUpdateCharacter}
-                onFieldChange={handleEditingFormFieldChange}
-                submitLabel="Guardar cambios"
-                isSubmitting={isUpdatingCharacter}
-                showStatsByDefault
-                disableCharacterSelect
-                characterPath={editingEntry.character.path}
-                onCancel={cancelEditingCharacter}
-              />
-            </Card>
+          {workspaceView === 'overview' ? (
+            <section className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
+              <WindowPanel
+                title="Command Deck"
+                subtitle="Tu resumen rapido para decidir el siguiente movimiento."
+              >
+                {pageError ? (
+                  <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-3 text-sm text-rose-200">
+                    {pageError}
+                  </div>
+                ) : null}
+
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-500)]">
+                      Estado
+                    </p>
+                    <p className="mt-2 text-3xl font-black text-[var(--ink-900)]">
+                      {dashboardSummary?.totalCharacters ?? myCharacters.length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-600)]">
+                      personajes listos para analisis y simulacion.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <ButtonLink href="/simulator" className="w-full">
+                      Ir al simulator
+                    </ButtonLink>
+                    <Button
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => setWorkspaceView('roster')}
+                    >
+                      Gestionar roster
+                    </Button>
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm text-[var(--ink-600)]">
+                    El dashboard y el roster ahora estan separados por
+                    ventanas. La idea es que abras solo el contexto que
+                    necesitas, no toda la pagina a la vez.
+                  </div>
+                </div>
+              </WindowPanel>
+
+              <WindowPanel
+                title="Dashboard"
+                subtitle="KPIs y accesos rapidos del MVP."
+              >
+                <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Personajes
+                    </p>
+                    {dashboardSummary ? (
+                      <p className="mt-3 text-3xl font-black text-[var(--ink-900)]">
+                        {dashboardSummary.totalCharacters}
+                      </p>
+                    ) : (
+                      <Skeleton className="mt-3 h-10 w-20 rounded-xl" />
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Recomendaciones
+                    </p>
+                    {dashboardSummary ? (
+                      <p className="mt-3 text-3xl font-black text-[var(--ink-900)]">
+                        {dashboardSummary.totalRecommendations}
+                      </p>
+                    ) : (
+                      <Skeleton className="mt-3 h-10 w-20 rounded-xl" />
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Simulaciones
+                    </p>
+                    {dashboardSummary ? (
+                      <p className="mt-3 text-3xl font-black text-[var(--ink-900)]">
+                        {dashboardSummary.totalSimulations}
+                      </p>
+                    ) : (
+                      <Skeleton className="mt-3 h-10 w-20 rounded-xl" />
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Ultima recomendacion
+                    </p>
+                    {!dashboardSummary ? (
+                      <div className="mt-3 space-y-2">
+                        <Skeleton className="h-4 w-32 rounded-full" />
+                        <Skeleton className="h-6 w-24 rounded-full" />
+                      </div>
+                    ) : dashboardSummary.lastRecommendation ? (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-sm font-semibold text-[var(--ink-900)]">
+                          {dashboardSummary.lastRecommendation.characterName} ·{' '}
+                          {dashboardSummary.lastRecommendation.score}
+                        </p>
+                        <Badge
+                          variant={recommendationLevelToBadgeVariant(
+                            dashboardSummary.lastRecommendation.recommendation,
+                          )}
+                        >
+                          {dashboardSummary.lastRecommendation.recommendation}
+                        </Badge>
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-[var(--ink-500)]">
+                        Aun no tienes recomendaciones guardadas.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={() => setWorkspaceView('roster')}
+                  >
+                    Registrar personaje
+                  </Button>
+                  <ButtonLink href="/simulator" variant="ghost">
+                    Abrir analisis
+                  </ButtonLink>
+                  <ButtonLink href="/simulator#scenario-simulation" variant="ghost">
+                    Simular dano
+                  </ButtonLink>
+                </div>
+              </WindowPanel>
+            </section>
           ) : null}
 
-          <Card
-            title="Mis personajes"
-            subtitle="Inventario inicial registrado en tu cuenta."
-          >
-            {myCharacters.length === 0 ? (
-              <p className="text-sm text-[var(--ink-500)]">
-                Aun no tienes personajes registrados.
-              </p>
-            ) : (
-              <ul className="grid gap-3 sm:grid-cols-2">
-                {myCharacters.map((entry) => (
-                  <li
-                    key={entry.id}
-                    className={`rounded-xl border p-3 ${
-                      editingCharacterId === entry.id
-                        ? 'border-[var(--brand-400)] bg-[var(--surface)] shadow-[0_0_0_1px_var(--brand-200)]'
-                        : 'border-[var(--line)] bg-[var(--surface-2)]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-[var(--ink-900)]">
-                          {entry.character.name}
+          {workspaceView === 'roster' ? (
+            <section className="grid items-start gap-6 xl:grid-cols-[0.98fr_1.02fr]">
+              <WindowPanel
+                title={editingEntry && editingForm ? 'Editar personaje' : 'Agregar personaje'}
+                subtitle={
+                  editingEntry && editingForm
+                    ? `Actualiza ${editingEntry.character.name} sin salir del panel.`
+                    : 'Selecciona un personaje base y guarda una version propia.'
+                }
+              >
+                {editingEntry && editingForm ? (
+                  <UserCharacterForm
+                    catalog={catalog}
+                    lightCones={lightCones}
+                    values={editingForm}
+                    onSubmit={handleUpdateCharacter}
+                    onFieldChange={handleEditingFormFieldChange}
+                    submitLabel="Guardar cambios"
+                    isSubmitting={isUpdatingCharacter}
+                    showStatsByDefault
+                    disableCharacterSelect
+                    characterPath={editingEntry.character.path}
+                    onCancel={cancelEditingCharacter}
+                  />
+                ) : (
+                  <UserCharacterForm
+                    catalog={catalog}
+                    lightCones={lightCones}
+                    values={createForm}
+                    onSubmit={handleCreateCharacter}
+                    onFieldChange={handleCreateFormFieldChange}
+                    submitLabel="Agregar a mi cuenta"
+                    isSubmitting={isCreatingCharacter}
+                    showManualToggle
+                    useManualStats={useManualStats}
+                    onUseManualStatsChange={handleManualStatsToggle}
+                    characterPath={selectedCharacter?.path ?? null}
+                  />
+                )}
+              </WindowPanel>
+
+              <WindowPanel
+                title="Roster guardado"
+                subtitle="Todo tu inventario visible en una sola ventana."
+                action={
+                  <Badge variant="neutral">
+                    {myCharacters.length} personaje
+                    {myCharacters.length === 1 ? '' : 's'}
+                  </Badge>
+                }
+              >
+                {myCharacters.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-6 text-sm text-[var(--ink-500)]">
+                    Aun no tienes personajes registrados.
+                  </div>
+                ) : (
+                  <div className="max-h-[72vh] space-y-3 overflow-y-auto pr-1">
+                    {myCharacters.map((entry) => (
+                      <article
+                        key={entry.id}
+                        className={`rounded-2xl border p-4 transition ${
+                          editingCharacterId === entry.id
+                            ? 'border-[var(--brand-400)] bg-[var(--surface)] shadow-[0_0_0_1px_var(--brand-200)]'
+                            : 'border-[var(--line)] bg-[var(--surface-2)] hover:border-[var(--line-strong)]'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-2">
+                            <p className="text-base font-semibold text-[var(--ink-900)]">
+                              {entry.character.name}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge variant="brand">{entry.character.element}</Badge>
+                              <Badge variant="outline">{entry.character.path}</Badge>
+                              <Badge variant="neutral">{entry.character.role}</Badge>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => startEditingCharacter(entry)}
+                            >
+                              Editar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="text-rose-300 ring-rose-500/35 hover:bg-rose-500/10 focus-visible:ring-rose-400"
+                              disabled={deletingCharacterId === entry.id}
+                              onClick={() => handleDeleteCharacter(entry)}
+                            >
+                              {deletingCharacterId === entry.id
+                                ? 'Eliminando...'
+                                : 'Eliminar'}
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="mt-4 text-xs font-medium tracking-wide text-[var(--ink-700)]">
+                          LVL {entry.level} · E{entry.eidolon} · ATK {entry.atk} · CR{' '}
+                          {Math.round(entry.critRate * 100)}% · CD{' '}
+                          {Math.round(entry.critDamage * 100)}% · SPD {entry.speed}
                         </p>
-                        <p className="text-sm text-[var(--ink-500)]">
-                          {entry.character.element} / {entry.character.path} /{' '}
-                          {entry.character.role}
+                        <p className="mt-2 text-xs text-[var(--ink-500)]">
+                          {entry.lightCone?.name || entry.lightConeName
+                            ? `Cono: ${entry.lightCone?.name ?? entry.lightConeName}${entry.lightConeLevel ? ` · Nivel ${entry.lightConeLevel}` : ''}`
+                            : 'Sin cono de luz registrado'}
                         </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={() => startEditingCharacter(entry)}
-                        >
-                          Editar
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="text-rose-700 ring-rose-200 hover:bg-rose-50 focus-visible:ring-rose-300"
-                          disabled={deletingCharacterId === entry.id}
-                          onClick={() => handleDeleteCharacter(entry)}
-                        >
-                          {deletingCharacterId === entry.id
-                            ? 'Eliminando...'
-                            : 'Eliminar'}
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xs font-medium tracking-wide text-[var(--ink-700)]">
-                      LVL {entry.level} · E{entry.eidolon} · ATK {entry.atk} · CR{' '}
-                      {Math.round(entry.critRate * 100)}% · CD{' '}
-                      {Math.round(entry.critDamage * 100)}% · SPD {entry.speed}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </WindowPanel>
+            </section>
+          ) : null}
+
+          {workspaceView === 'account' ? (
+            <section className="grid items-start gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+              <WindowPanel
+                title="Perfil"
+                subtitle="Datos base y accesos de navegacion."
+              >
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
+                      Usuario
                     </p>
-                    <p className="mt-1 text-xs text-[var(--ink-500)]">
-                      {entry.lightCone?.name || entry.lightConeName
-                        ? `Cono: ${entry.lightCone?.name ?? entry.lightConeName}${entry.lightConeLevel ? ` · Nivel ${entry.lightConeLevel}` : ''}`
-                        : 'Sin cono de luz registrado'}
+                    <p className="mt-2 text-xl font-bold text-[var(--ink-900)]">
+                      {me?.name ?? 'Sin nombre'}
                     </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+                    <p className="mt-1 text-sm text-[var(--ink-600)]">
+                      {me?.email ?? 'Sin correo'}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <ButtonLink href="/simulator" className="w-full">
+                      Abrir simulator
+                    </ButtonLink>
+                    <Button variant="ghost" className="w-full" onClick={handleLogout}>
+                      Cerrar sesion
+                    </Button>
+                  </div>
+                </div>
+              </WindowPanel>
+
+              <WindowPanel
+                title="Seguridad"
+                subtitle="Cambia la contrasena desde un flujo corto y aislado."
+              >
+                <form className="grid gap-3 md:grid-cols-2" onSubmit={handleChangePasswordSubmit}>
+                  <div className="md:col-span-2">
+                    <Input
+                      name="email"
+                      type="email"
+                      placeholder="Correo de la cuenta"
+                      defaultValue={me?.email ?? ''}
+                      required
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Input
+                      name="newPassword"
+                      type="password"
+                      placeholder="Nueva contrasena (8+)"
+                      required
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex flex-wrap gap-3">
+                    <Button type="submit">Actualizar contrasena</Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setWorkspaceView('overview')}
+                    >
+                      Volver al resumen
+                    </Button>
+                  </div>
+                </form>
+              </WindowPanel>
+            </section>
+          ) : null}
         </>
       )}
     </main>

@@ -1,7 +1,9 @@
 import {
   AnalysisCharacter,
+  AnalysisOffenseModifiers,
   DamageProfile,
   DamageComparisonResult,
+  EMPTY_ANALYSIS_OFFENSE_MODIFIERS,
   SynergyEdge,
   TeamDamageMember,
   TeamDamageResult,
@@ -89,6 +91,10 @@ type TeamCombatContext = {
   universalDmgReduction: number;
   weaken: number;
 };
+
+function readModifiers(member: AnalysisCharacter): AnalysisOffenseModifiers {
+  return member.modifiers ?? EMPTY_ANALYSIS_OFFENSE_MODIFIERS;
+}
 
 export function inferTeamRole(path: string, roleText: string): TeamRole {
   const text = `${path} ${roleText}`.toLowerCase();
@@ -323,10 +329,13 @@ function buildTeamCombatContext(
   };
 }
 
-function calculateDefMultiplier(context: TeamCombatContext): number {
+function calculateDefMultiplier(
+  context: TeamCombatContext,
+  memberDefIgnore: number,
+): number {
   const defenseScaling = Math.max(
     0,
-    1 - context.defReduction - context.defIgnore,
+    1 - context.defReduction - context.defIgnore - memberDefIgnore,
   );
   const numerator = context.attackerLevel + 20;
   const denominator =
@@ -339,8 +348,15 @@ function calculateDefMultiplier(context: TeamCombatContext): number {
   return numerator / denominator;
 }
 
-function calculateResMultiplier(context: TeamCombatContext): number {
-  const effectiveRes = clamp(context.targetRes - context.resPen, -1, 0.9);
+function calculateResMultiplier(
+  context: TeamCombatContext,
+  memberResPen: number,
+): number {
+  const effectiveRes = clamp(
+    context.targetRes - context.resPen - memberResPen,
+    -1,
+    0.9,
+  );
   return 1 - effectiveRes;
 }
 
@@ -350,13 +366,16 @@ function calculateCritMultiplier(member: TeamDamageMember): number {
     return 1;
   }
 
-  const critRate = clamp(member.critRate, 0, 1);
-  const critDamage = Math.max(0, member.critDamage);
+  const modifiers = readModifiers(member);
+  const critRate = clamp(member.critRate + modifiers.critRateFlat, 0, 1);
+  const critDamage = Math.max(0, member.critDamage + modifiers.critDamageFlat);
   return 1 + critRate * critDamage;
 }
 
-function calculateActionFrequencyMultiplier(speed: number): number {
-  const actionValue = ACTION_GAUGE_BASE / Math.max(1, speed);
+function calculateActionFrequencyMultiplier(member: TeamDamageMember): number {
+  const modifiers = readModifiers(member);
+  const effectiveSpeed = Math.max(1, member.speed + modifiers.speedFlat);
+  const actionValue = ACTION_GAUGE_BASE / effectiveSpeed;
   const actionsPer100AV = 100 / actionValue;
   return clamp(actionsPer100AV, 0.5, 2.8);
 }
@@ -365,6 +384,7 @@ function calculateDmgPercentMultiplier(
   member: TeamDamageMember,
   context: TeamCombatContext,
 ): number {
+  const modifiers = readModifiers(member);
   const dotBonus = member.profile === 'dot' ? DOT_DMG_BONUS : 0;
   const otherBonus =
     (member.synergyMultiplier - 1) * SYNERGY_TO_DMG_BONUS_FACTOR +
@@ -375,33 +395,38 @@ function calculateDmgPercentMultiplier(
     PROFILE_DMG_BONUS[member.profile] +
     ROLE_DMG_BONUS[member.role] +
     dotBonus +
+    modifiers.dmgBonus +
+    (member.profile === 'dot' ? modifiers.dotBonus : 0) +
     Math.max(0, otherBonus)
   );
 }
 
 function calculateBaseDamage(member: TeamDamageMember): number {
+  const modifiers = readModifiers(member);
   const skillMultiplier =
     ROLE_SKILL_MULTIPLIER[member.role] *
     PROFILE_SKILL_MULTIPLIER[member.profile];
   const extraMultiplier = PROFILE_EXTRA_MULTIPLIER[member.profile];
 
-  return (skillMultiplier + extraMultiplier) * Math.max(1, member.atk);
+  const effectiveAtk = Math.max(1, member.atk * (1 + modifiers.atkPercent));
+  return (skillMultiplier + extraMultiplier) * effectiveAtk;
 }
 
 function damagePerCharacter(
   member: TeamDamageMember,
   context: TeamCombatContext,
 ): number {
+  const modifiers = readModifiers(member);
   const baseDamage = calculateBaseDamage(member);
   const dmgPercentMultiplier = calculateDmgPercentMultiplier(member, context);
-  const defMultiplier = calculateDefMultiplier(context);
-  const resMultiplier = calculateResMultiplier(context);
+  const defMultiplier = calculateDefMultiplier(context, modifiers.defIgnore);
+  const resMultiplier = calculateResMultiplier(context, modifiers.resPen);
   const dmgTakenMultiplier = 1 + context.dmgTakenBonus;
   const universalDmgReductionMultiplier =
     1 - clamp(context.universalDmgReduction, 0, 0.95);
   const weakenMultiplier = 1 - clamp(context.weaken, 0, 1);
   const critMultiplier = calculateCritMultiplier(member);
-  const actionsMultiplier = calculateActionFrequencyMultiplier(member.speed);
+  const actionsMultiplier = calculateActionFrequencyMultiplier(member);
 
   const outgoingPerAction =
     baseDamage *
@@ -500,20 +525,94 @@ export function compareTeamDamage(
 }
 
 function scoreForSelection(character: AnalysisCharacter): number {
-  const critRate = clamp(character.critRate, 0, 1);
-  const critDamage = Math.max(0, character.critDamage);
+  const modifiers = readModifiers(character);
+  const critRate = clamp(character.critRate + modifiers.critRateFlat, 0, 1);
+  const critDamage = Math.max(
+    0,
+    character.critDamage + modifiers.critDamageFlat,
+  );
+  const effectiveAtk = Math.max(1, character.atk * (1 + modifiers.atkPercent));
+  const effectiveSpeed = Math.max(1, character.speed + modifiers.speedFlat);
   const role = inferTeamRole(character.path, character.roleText);
   const profile = inferDamageProfile(character.path, character.roleText);
 
   const base =
-    character.atk *
+    effectiveAtk *
     (1 + critRate * critDamage) *
-    (1 + (character.speed - BASE_SPEED) / 400);
+    (1 + (effectiveSpeed - BASE_SPEED) / 400) *
+    (1 + modifiers.dmgBonus + (profile === 'dot' ? modifiers.dotBonus : 0));
   return (
     base *
     ROLE_SELECTION_MULTIPLIER[role] *
     PROFILE_SELECTION_MULTIPLIER[profile]
   );
+}
+
+function hasForcedSynergyLink(
+  candidateId: number,
+  forcedId: number | undefined,
+  synergyMap: Map<string, number>,
+): boolean {
+  if (typeof forcedId !== 'number') {
+    return false;
+  }
+
+  const weight = readPairSynergyWeight(candidateId, forcedId, synergyMap);
+  return typeof weight === 'number' && weight > 0;
+}
+
+function rankByTeamSelection(
+  a: AnalysisCharacter,
+  b: AnalysisCharacter,
+  selectedIds: number[],
+  forcedId: number | undefined,
+  synergyMap: Map<string, number>,
+) {
+  const aScore = scoreForTeamSelection(a, selectedIds, forcedId, synergyMap);
+  const bScore = scoreForTeamSelection(b, selectedIds, forcedId, synergyMap);
+  return bScore - aScore;
+}
+
+function pickBestCandidate(
+  roster: AnalysisCharacter[],
+  excludedIds: Set<number>,
+  selectedIds: number[],
+  forcedId: number | undefined,
+  synergyMap: Map<string, number>,
+  desiredRole?: TeamRole,
+  preferForcedLinkedMembers = false,
+): AnalysisCharacter | null {
+  const candidates = roster.filter((character) => {
+    if (excludedIds.has(character.id)) {
+      return false;
+    }
+
+    if (
+      desiredRole &&
+      inferTeamRole(character.path, character.roleText) !== desiredRole
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const linkedCandidates =
+    preferForcedLinkedMembers && typeof forcedId === 'number'
+      ? candidates.filter((candidate) =>
+          hasForcedSynergyLink(candidate.id, forcedId, synergyMap),
+        )
+      : [];
+
+  const pool = linkedCandidates.length > 0 ? linkedCandidates : candidates;
+
+  return pool.sort((a, b) =>
+    rankByTeamSelection(a, b, selectedIds, forcedId, synergyMap),
+  )[0];
 }
 
 function pickBestByRole(
@@ -523,21 +622,17 @@ function pickBestByRole(
   selectedIds: number[],
   forcedId: number | undefined,
   synergyMap: Map<string, number>,
+  preferForcedLinkedMembers = false,
 ): AnalysisCharacter | null {
-  const candidates = roster.filter((character) => {
-    if (excludedIds.has(character.id)) return false;
-    return inferTeamRole(character.path, character.roleText) === desiredRole;
-  });
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return candidates.sort((a, b) => {
-    const aScore = scoreForTeamSelection(a, selectedIds, forcedId, synergyMap);
-    const bScore = scoreForTeamSelection(b, selectedIds, forcedId, synergyMap);
-    return bScore - aScore;
-  })[0];
+  return pickBestCandidate(
+    roster,
+    excludedIds,
+    selectedIds,
+    forcedId,
+    synergyMap,
+    desiredRole,
+    preferForcedLinkedMembers,
+  );
 }
 
 function scoreForTeamSelection(
@@ -585,79 +680,120 @@ function scoreForTeamSelection(
   );
 }
 
-export function buildBalancedTeam(
+function hasSelectedRole(
+  selected: AnalysisCharacter[],
+  desiredRole: TeamRole,
+): boolean {
+  return selected.some(
+    (member) => inferTeamRole(member.path, member.roleText) === desiredRole,
+  );
+}
+
+export function buildTeamWithLockedMembers(
   roster: AnalysisCharacter[],
+  lockedMemberIds: number[],
   forcedId?: number,
   synergyEdges: SynergyEdge[] = [],
 ): AnalysisCharacter[] {
   const synergyMap = buildSynergyMap(synergyEdges);
   const selected: AnalysisCharacter[] = [];
   const usedIds = new Set<number>();
+  const uniqueLockedIds = [...new Set(lockedMemberIds)];
+  const orderedLockedIds =
+    typeof forcedId === 'number'
+      ? [forcedId, ...uniqueLockedIds.filter((id) => id !== forcedId)]
+      : uniqueLockedIds;
 
-  if (typeof forcedId === 'number') {
-    const forcedCharacter = roster.find(
-      (character) => character.id === forcedId,
-    );
-    if (forcedCharacter) {
-      selected.push(forcedCharacter);
-      usedIds.add(forcedCharacter.id);
+  for (const lockedId of orderedLockedIds) {
+    const member = roster.find((character) => character.id === lockedId);
+    if (!member || usedIds.has(member.id)) {
+      continue;
     }
+
+    selected.push(member);
+    usedIds.add(member.id);
   }
 
-  const sustain = pickBestByRole(
-    roster,
-    'sustain',
-    usedIds,
-    selected.map((member) => member.id),
-    forcedId,
-    synergyMap,
-  );
-  if (sustain) {
-    selected.push(sustain);
-    usedIds.add(sustain.id);
+  if (selected.length >= 4) {
+    return selected.slice(0, 4);
   }
 
-  const support = pickBestByRole(
-    roster,
-    'support',
-    usedIds,
-    selected.map((member) => member.id),
-    forcedId,
-    synergyMap,
-  );
-  if (support) {
-    selected.push(support);
-    usedIds.add(support.id);
+  const remainingSlots = () => Math.max(0, 4 - selected.length);
+
+  const linkedCandidatesRemaining = () =>
+    typeof forcedId === 'number'
+      ? roster.filter(
+          (candidate) =>
+            !usedIds.has(candidate.id) &&
+            candidate.id !== forcedId &&
+            hasForcedSynergyLink(candidate.id, forcedId, synergyMap),
+        ).length
+      : 0;
+
+  // Use forced-target links as a hard preference only when enough linked members
+  // exist to complete the remaining team slots.
+  const shouldPreferForcedLinks = () =>
+    typeof forcedId === 'number' &&
+    linkedCandidatesRemaining() >= remainingSlots();
+
+  const tryAddByRole = (desiredRole: TeamRole) => {
+    if (selected.length >= 4) {
+      return;
+    }
+
+    const next = pickBestByRole(
+      roster,
+      desiredRole,
+      usedIds,
+      selected.map((member) => member.id),
+      forcedId,
+      synergyMap,
+      shouldPreferForcedLinks(),
+    );
+
+    if (next) {
+      selected.push(next);
+      usedIds.add(next.id);
+    }
+  };
+
+  if (!hasSelectedRole(selected, 'sustain')) {
+    tryAddByRole('sustain');
+  }
+
+  if (!hasSelectedRole(selected, 'support')) {
+    tryAddByRole('support');
   }
 
   while (selected.length < 4) {
-    const selectedIds = selected.map((member) => member.id);
-    const remaining = roster.filter((candidate) => !usedIds.has(candidate.id));
-    if (remaining.length === 0) {
+    const next = pickBestCandidate(
+      roster,
+      usedIds,
+      selected.map((member) => member.id),
+      forcedId,
+      synergyMap,
+      undefined,
+      shouldPreferForcedLinks(),
+    );
+
+    if (!next) {
       break;
     }
-
-    const next = remaining.sort((a, b) => {
-      const aScore = scoreForTeamSelection(
-        a,
-        selectedIds,
-        forcedId,
-        synergyMap,
-      );
-      const bScore = scoreForTeamSelection(
-        b,
-        selectedIds,
-        forcedId,
-        synergyMap,
-      );
-      return bScore - aScore;
-    })[0];
 
     selected.push(next);
     usedIds.add(next.id);
   }
 
   return selected.slice(0, 4);
+}
+
+export function buildBalancedTeam(
+  roster: AnalysisCharacter[],
+  forcedId?: number,
+  synergyEdges: SynergyEdge[] = [],
+): AnalysisCharacter[] {
+  const lockedIds = typeof forcedId === 'number' ? [forcedId] : [];
+  return buildTeamWithLockedMembers(roster, lockedIds, forcedId, synergyEdges);
 }
 
 export function countCompatibleTeams(
