@@ -9,6 +9,7 @@ import {
   TeamDamageResult,
   TeamRole,
 } from './types';
+import { hasDerivedArchetype } from './derived-archetypes';
 
 const BASE_SPEED = 100;
 const ACTION_GAUGE_BASE = 10000;
@@ -79,6 +80,7 @@ const ROLE_DMG_BONUS: Record<TeamRole, number> = {
 
 const DOT_DMG_BONUS = 0.2;
 const SYNERGY_TO_DMG_BONUS_FACTOR = 0.9;
+const REAL_SYNERGY_WEIGHT_THRESHOLD = 45;
 
 type TeamCombatContext = {
   attackerLevel: number;
@@ -96,8 +98,25 @@ function readModifiers(member: AnalysisCharacter): AnalysisOffenseModifiers {
   return member.modifiers ?? EMPTY_ANALYSIS_OFFENSE_MODIFIERS;
 }
 
-export function inferTeamRole(path: string, roleText: string): TeamRole {
-  const text = `${path} ${roleText}`.toLowerCase();
+function hasTag(member: AnalysisCharacter, tagKey: string) {
+  return member.tagKeys.includes(tagKey);
+}
+
+export function inferTeamRole(
+  path: string,
+  roleText: string,
+  tagKeys: string[] = [],
+): TeamRole {
+  const text = `${path} ${roleText} ${tagKeys.join(' ')}`.toLowerCase();
+
+  if (
+    text.includes('support-dps') ||
+    text.includes('support dps') ||
+    text.includes('sub-dps') ||
+    text.includes('sub dps')
+  ) {
+    return 'sub_dps';
+  }
 
   if (
     text.includes('abundance') ||
@@ -111,21 +130,24 @@ export function inferTeamRole(path: string, roleText: string): TeamRole {
     text.includes('harmony') ||
     text.includes('support') ||
     text.includes('buffer') ||
-    text.includes('debuff')
+    text.includes('amplifier')
   ) {
     return 'support';
   }
 
-  if (
-    text.includes('sub') ||
-    text.includes('follow-up') ||
-    text.includes('dot')
-  ) {
+  if (tagKeys.includes('Amplifier')) {
+    return 'support';
+  }
+
+  if (tagKeys.includes('DPS') || text.includes('dps')) {
+    return 'dps';
+  }
+
+  if (text.includes('sub') || text.includes('follow-up')) {
     return 'sub_dps';
   }
 
   if (
-    text.includes('dps') ||
     text.includes('hunt') ||
     text.includes('destruction') ||
     text.includes('erudition')
@@ -139,8 +161,16 @@ export function inferTeamRole(path: string, roleText: string): TeamRole {
 export function inferDamageProfile(
   path: string,
   roleText: string,
+  tagKeys: string[] = [],
+  name = '',
 ): DamageProfile {
-  const text = `${path} ${roleText}`.toLowerCase();
+  const text = `${path} ${roleText} ${tagKeys.join(' ')}`.toLowerCase();
+  const character = {
+    name,
+    path,
+    roleText,
+    tagKeys,
+  };
 
   if (text.includes('dot') || text.includes('nihility')) {
     return 'dot';
@@ -161,7 +191,8 @@ export function inferDamageProfile(
   if (
     text.includes('single') ||
     text.includes('hunt') ||
-    text.includes('follow-up')
+    text.includes('follow-up') ||
+    hasDerivedArchetype(character, 'follow_up')
   ) {
     return 'single_target';
   }
@@ -361,8 +392,8 @@ function calculateResMultiplier(
 }
 
 function calculateCritMultiplier(member: TeamDamageMember): number {
-  if (member.profile === 'dot') {
-    // DoT effects do not crit in HSR.
+  if (member.profile === 'dot' || hasTag(member, 'Break-Scaller')) {
+    // DoT and break-oriented damage lines are evaluated without crit scaling.
     return 1;
   }
 
@@ -386,6 +417,14 @@ function calculateDmgPercentMultiplier(
 ): number {
   const modifiers = readModifiers(member);
   const dotBonus = member.profile === 'dot' ? DOT_DMG_BONUS : 0;
+  const breakBonus =
+    hasTag(member, 'Break-Scaller') || hasTag(member, 'BreakPlayed')
+      ? member.breakEffect * 0.6
+      : 0;
+  const ehrBonus =
+    hasTag(member, 'Debuff') || hasTag(member, 'DoT')
+      ? member.effectHitRate * 0.18
+      : 0;
   const otherBonus =
     (member.synergyMultiplier - 1) * SYNERGY_TO_DMG_BONUS_FACTOR +
     Math.max(0, context.resPen * 0.25);
@@ -395,21 +434,84 @@ function calculateDmgPercentMultiplier(
     PROFILE_DMG_BONUS[member.profile] +
     ROLE_DMG_BONUS[member.role] +
     dotBonus +
+    breakBonus +
+    ehrBonus +
+    member.elementalDmgBonus +
     modifiers.dmgBonus +
     (member.profile === 'dot' ? modifiers.dotBonus : 0) +
     Math.max(0, otherBonus)
   );
 }
 
-function calculateBaseDamage(member: TeamDamageMember): number {
+function calculateScalingStatValue(member: TeamDamageMember): number {
   const modifiers = readModifiers(member);
+  const effectiveAtk = Math.max(1, member.atk * (1 + modifiers.atkPercent));
+  const effectiveHp = Math.max(1, member.hp);
+  const effectiveDef = Math.max(1, member.def);
+  const effectiveSpeed = Math.max(1, member.speed + modifiers.speedFlat);
+  const effectiveBreak = Math.max(0, member.breakEffect);
+  const effectiveEhr = Math.max(0, member.effectHitRate);
+  const effectiveCritDamage = Math.max(
+    0,
+    member.critDamage + modifiers.critDamageFlat,
+  );
+
+  let scalingValue = effectiveAtk;
+
+  if (hasTag(member, 'HP-Scaller')) {
+    scalingValue = Math.max(scalingValue, effectiveHp * 0.24);
+  }
+
+  if (hasTag(member, 'DEF-Scaller')) {
+    scalingValue = Math.max(scalingValue, effectiveDef * 0.72);
+  }
+
+  if (hasTag(member, 'SPD-Scaller')) {
+    scalingValue = Math.max(
+      scalingValue,
+      effectiveAtk * 0.62 + Math.max(0, effectiveSpeed - BASE_SPEED) * 18,
+    );
+  }
+
+  if (hasTag(member, 'Break-Scaller')) {
+    scalingValue = Math.max(
+      scalingValue,
+      effectiveAtk * 0.45 + effectiveBreak * 2100,
+    );
+  }
+
+  if (hasTag(member, 'CritDMG-Scaller')) {
+    scalingValue = Math.max(
+      scalingValue,
+      effectiveAtk * 0.72 + effectiveCritDamage * 950,
+    );
+  }
+
+  if (hasTag(member, 'EHR-Scaller')) {
+    scalingValue = Math.max(
+      scalingValue,
+      effectiveAtk * 0.64 + effectiveEhr * 1100,
+    );
+  }
+
+  if (member.profile === 'dot') {
+    scalingValue = Math.max(
+      scalingValue,
+      effectiveAtk * 0.85 + effectiveEhr * 800,
+    );
+  }
+
+  return scalingValue;
+}
+
+function calculateBaseDamage(member: TeamDamageMember): number {
   const skillMultiplier =
     ROLE_SKILL_MULTIPLIER[member.role] *
     PROFILE_SKILL_MULTIPLIER[member.profile];
   const extraMultiplier = PROFILE_EXTRA_MULTIPLIER[member.profile];
+  const scalingStatValue = calculateScalingStatValue(member);
 
-  const effectiveAtk = Math.max(1, member.atk * (1 + modifiers.atkPercent));
-  return (skillMultiplier + extraMultiplier) * effectiveAtk;
+  return (skillMultiplier + extraMultiplier) * scalingStatValue;
 }
 
 function damagePerCharacter(
@@ -449,8 +551,13 @@ export function calculateTeamDamage(
   const teamMemberIds = team.map((member) => member.id);
 
   const members: TeamDamageMember[] = team.map((member) => {
-    const role = inferTeamRole(member.path, member.roleText);
-    const profile = inferDamageProfile(member.path, member.roleText);
+    const role = inferTeamRole(member.path, member.roleText, member.tagKeys);
+    const profile = inferDamageProfile(
+      member.path,
+      member.roleText,
+      member.tagKeys,
+      member.name,
+    );
     const synergyMultiplier = calculateMemberSynergyMultiplier(
       member.id,
       teamMemberIds,
@@ -531,16 +638,37 @@ function scoreForSelection(character: AnalysisCharacter): number {
     0,
     character.critDamage + modifiers.critDamageFlat,
   );
-  const effectiveAtk = Math.max(1, character.atk * (1 + modifiers.atkPercent));
   const effectiveSpeed = Math.max(1, character.speed + modifiers.speedFlat);
-  const role = inferTeamRole(character.path, character.roleText);
-  const profile = inferDamageProfile(character.path, character.roleText);
+  const role = inferTeamRole(
+    character.path,
+    character.roleText,
+    character.tagKeys,
+  );
+  const profile = inferDamageProfile(
+    character.path,
+    character.roleText,
+    character.tagKeys,
+    character.name,
+  );
+  const effectiveScalingValue = calculateScalingStatValue({
+    ...character,
+    role,
+    profile,
+    synergyMultiplier: 1,
+    profileMultiplier: 1,
+  });
 
   const base =
-    effectiveAtk *
+    effectiveScalingValue *
     (1 + critRate * critDamage) *
     (1 + (effectiveSpeed - BASE_SPEED) / 400) *
-    (1 + modifiers.dmgBonus + (profile === 'dot' ? modifiers.dotBonus : 0));
+    (1 +
+      modifiers.dmgBonus +
+      character.elementalDmgBonus +
+      (profile === 'dot'
+        ? modifiers.dotBonus + character.effectHitRate * 0.14
+        : 0) +
+      (hasTag(character, 'Break-Scaller') ? character.breakEffect * 0.35 : 0));
   return (
     base *
     ROLE_SELECTION_MULTIPLIER[role] *
@@ -548,7 +676,7 @@ function scoreForSelection(character: AnalysisCharacter): number {
   );
 }
 
-function hasForcedSynergyLink(
+function hasRealForcedSynergyLink(
   candidateId: number,
   forcedId: number | undefined,
   synergyMap: Map<string, number>,
@@ -558,7 +686,31 @@ function hasForcedSynergyLink(
   }
 
   const weight = readPairSynergyWeight(candidateId, forcedId, synergyMap);
-  return typeof weight === 'number' && weight > 0;
+  return typeof weight === 'number' && weight >= REAL_SYNERGY_WEIGHT_THRESHOLD;
+}
+
+function isDamageDealerRole(role: TeamRole) {
+  return role === 'dps' || role === 'sub_dps';
+}
+
+function hasShellArchetype(member: AnalysisCharacter) {
+  return (
+    hasTag(member, 'DoT') ||
+    hasTag(member, 'Break') ||
+    hasTag(member, 'Debuff') ||
+    hasDerivedArchetype(member, 'follow_up') ||
+    hasDerivedArchetype(member, 'follow_up_support') ||
+    hasDerivedArchetype(member, 'counter') ||
+    hasDerivedArchetype(member, 'counter_support') ||
+    hasDerivedArchetype(member, 'summon') ||
+    hasDerivedArchetype(member, 'summon_support') ||
+    hasDerivedArchetype(member, 'hypercarry') ||
+    hasDerivedArchetype(member, 'hypercarry_support')
+  );
+}
+
+function requiresCohesiveShell(member: AnalysisCharacter) {
+  return hasShellArchetype(member);
 }
 
 function rankByTeamSelection(
@@ -567,9 +719,22 @@ function rankByTeamSelection(
   selectedIds: number[],
   forcedId: number | undefined,
   synergyMap: Map<string, number>,
+  forcedTarget?: AnalysisCharacter,
 ) {
-  const aScore = scoreForTeamSelection(a, selectedIds, forcedId, synergyMap);
-  const bScore = scoreForTeamSelection(b, selectedIds, forcedId, synergyMap);
+  const aScore = scoreForTeamSelection(
+    a,
+    selectedIds,
+    forcedId,
+    synergyMap,
+    forcedTarget,
+  );
+  const bScore = scoreForTeamSelection(
+    b,
+    selectedIds,
+    forcedId,
+    synergyMap,
+    forcedTarget,
+  );
   return bScore - aScore;
 }
 
@@ -581,6 +746,7 @@ function pickBestCandidate(
   synergyMap: Map<string, number>,
   desiredRole?: TeamRole,
   preferForcedLinkedMembers = false,
+  forcedTarget?: AnalysisCharacter,
 ): AnalysisCharacter | null {
   const candidates = roster.filter((character) => {
     if (excludedIds.has(character.id)) {
@@ -589,7 +755,8 @@ function pickBestCandidate(
 
     if (
       desiredRole &&
-      inferTeamRole(character.path, character.roleText) !== desiredRole
+      inferTeamRole(character.path, character.roleText, character.tagKeys) !==
+        desiredRole
     ) {
       return false;
     }
@@ -604,14 +771,30 @@ function pickBestCandidate(
   const linkedCandidates =
     preferForcedLinkedMembers && typeof forcedId === 'number'
       ? candidates.filter((candidate) =>
-          hasForcedSynergyLink(candidate.id, forcedId, synergyMap),
+          hasRealForcedSynergyLink(candidate.id, forcedId, synergyMap),
         )
       : [];
 
   const pool = linkedCandidates.length > 0 ? linkedCandidates : candidates;
+  const utilityFallbackCandidates =
+    !desiredRole &&
+    linkedCandidates.length === 0 &&
+    forcedTarget &&
+    requiresCohesiveShell(forcedTarget)
+      ? pool.filter((candidate) => {
+          const candidateRole = inferTeamRole(
+            candidate.path,
+            candidate.roleText,
+            candidate.tagKeys,
+          );
+          return !isDamageDealerRole(candidateRole);
+        })
+      : [];
+  const finalPool =
+    utilityFallbackCandidates.length > 0 ? utilityFallbackCandidates : pool;
 
-  return pool.sort((a, b) =>
-    rankByTeamSelection(a, b, selectedIds, forcedId, synergyMap),
+  return finalPool.sort((a, b) =>
+    rankByTeamSelection(a, b, selectedIds, forcedId, synergyMap, forcedTarget),
   )[0];
 }
 
@@ -623,6 +806,7 @@ function pickBestByRole(
   forcedId: number | undefined,
   synergyMap: Map<string, number>,
   preferForcedLinkedMembers = false,
+  forcedTarget?: AnalysisCharacter,
 ): AnalysisCharacter | null {
   return pickBestCandidate(
     roster,
@@ -632,6 +816,7 @@ function pickBestByRole(
     synergyMap,
     desiredRole,
     preferForcedLinkedMembers,
+    forcedTarget,
   );
 }
 
@@ -640,6 +825,7 @@ function scoreForTeamSelection(
   selectedIds: number[],
   forcedId: number | undefined,
   synergyMap: Map<string, number>,
+  forcedTarget?: AnalysisCharacter,
 ): number {
   const baseScore = scoreForSelection(candidate);
   if (selectedIds.length === 0) {
@@ -658,6 +844,19 @@ function scoreForTeamSelection(
     typeof forcedId === 'number'
       ? averageSynergyWithGroup(candidate.id, [forcedId], synergyMap)
       : 0;
+  const hasRealForcedSynergy = hasRealForcedSynergyLink(
+    candidate.id,
+    forcedId,
+    synergyMap,
+  );
+  const candidateRole = inferTeamRole(
+    candidate.path,
+    candidate.roleText,
+    candidate.tagKeys,
+  );
+  const shellTarget = forcedTarget
+    ? requiresCohesiveShell(forcedTarget)
+    : false;
 
   const forcedSynergyMultiplier =
     typeof forcedId === 'number'
@@ -665,18 +864,24 @@ function scoreForTeamSelection(
       : 1;
 
   // If a forced target exists, down-rank candidates with no direct link to it.
-  const noForcedSynergyPenalty =
-    typeof forcedId === 'number' &&
-    candidate.id !== forcedId &&
-    forcedSynergy === 0
-      ? 0.72
-      : 1;
+  let noForcedSynergyPenalty = 1;
+  if (typeof forcedId === 'number' && candidate.id !== forcedId) {
+    if (shellTarget && !hasRealForcedSynergy) {
+      noForcedSynergyPenalty = isDamageDealerRole(candidateRole) ? 0.1 : 0.5;
+    } else if (forcedSynergy === 0) {
+      noForcedSynergyPenalty = 0.72;
+    }
+  }
+
+  const realSynergyBonus =
+    typeof forcedId === 'number' && hasRealForcedSynergy ? 1.06 : 1;
 
   return (
     baseScore *
     selectedSynergyMultiplier *
     forcedSynergyMultiplier *
-    noForcedSynergyPenalty
+    noForcedSynergyPenalty *
+    realSynergyBonus
   );
 }
 
@@ -685,7 +890,9 @@ function hasSelectedRole(
   desiredRole: TeamRole,
 ): boolean {
   return selected.some(
-    (member) => inferTeamRole(member.path, member.roleText) === desiredRole,
+    (member) =>
+      inferTeamRole(member.path, member.roleText, member.tagKeys) ===
+      desiredRole,
   );
 }
 
@@ -698,6 +905,10 @@ export function buildTeamWithLockedMembers(
   const synergyMap = buildSynergyMap(synergyEdges);
   const selected: AnalysisCharacter[] = [];
   const usedIds = new Set<number>();
+  const forcedTarget =
+    typeof forcedId === 'number'
+      ? roster.find((character) => character.id === forcedId)
+      : undefined;
   const uniqueLockedIds = [...new Set(lockedMemberIds)];
   const orderedLockedIds =
     typeof forcedId === 'number'
@@ -726,7 +937,7 @@ export function buildTeamWithLockedMembers(
           (candidate) =>
             !usedIds.has(candidate.id) &&
             candidate.id !== forcedId &&
-            hasForcedSynergyLink(candidate.id, forcedId, synergyMap),
+            hasRealForcedSynergyLink(candidate.id, forcedId, synergyMap),
         ).length
       : 0;
 
@@ -734,7 +945,10 @@ export function buildTeamWithLockedMembers(
   // exist to complete the remaining team slots.
   const shouldPreferForcedLinks = () =>
     typeof forcedId === 'number' &&
-    linkedCandidatesRemaining() >= remainingSlots();
+    (linkedCandidatesRemaining() >= remainingSlots() ||
+      (!!forcedTarget &&
+        requiresCohesiveShell(forcedTarget) &&
+        linkedCandidatesRemaining() > 0));
 
   const tryAddByRole = (desiredRole: TeamRole) => {
     if (selected.length >= 4) {
@@ -749,6 +963,7 @@ export function buildTeamWithLockedMembers(
       forcedId,
       synergyMap,
       shouldPreferForcedLinks(),
+      forcedTarget,
     );
 
     if (next) {
@@ -774,6 +989,7 @@ export function buildTeamWithLockedMembers(
       synergyMap,
       undefined,
       shouldPreferForcedLinks(),
+      forcedTarget,
     );
 
     if (!next) {
@@ -799,7 +1015,11 @@ export function buildBalancedTeam(
 export function countCompatibleTeams(
   roster: AnalysisCharacter[],
   targetCharacterId: number,
+  synergyEdges: SynergyEdge[] = [],
 ): number {
+  const synergyMap = buildSynergyMap(synergyEdges);
+  const target = roster.find((character) => character.id === targetCharacterId);
+  const minimumRealLinks = target && requiresCohesiveShell(target) ? 2 : 1;
   const others = roster.filter(
     (character) => character.id !== targetCharacterId,
   );
@@ -820,12 +1040,28 @@ export function countCompatibleTeams(
         ].filter(Boolean) as AnalysisCharacter[];
 
         const roles = new Set(
-          team.map((member) => inferTeamRole(member.path, member.roleText)),
+          team.map((member) =>
+            inferTeamRole(member.path, member.roleText, member.tagKeys),
+          ),
         );
+        const realTargetLinks = team
+          .filter((member) => member.id !== targetCharacterId)
+          .reduce((count, member) => {
+            const weight = readPairSynergyWeight(
+              member.id,
+              targetCharacterId,
+              synergyMap,
+            );
+
+            return typeof weight === 'number' &&
+              weight >= REAL_SYNERGY_WEIGHT_THRESHOLD
+              ? count + 1
+              : count;
+          }, 0);
         const hasDps = roles.has('dps') || roles.has('sub_dps');
         const hasSupport = roles.has('support');
 
-        if (hasDps && hasSupport) {
+        if (hasDps && hasSupport && realTargetLinks >= minimumRealLinks) {
           validTeams += 1;
           if (validTeams >= 4) return 4;
         }
@@ -833,5 +1069,5 @@ export function countCompatibleTeams(
     }
   }
 
-  return Math.max(1, validTeams);
+  return validTeams;
 }

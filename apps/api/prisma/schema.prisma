@@ -14,6 +14,43 @@ enum RecommendationLevel {
   MUY_RECOMENDADO
 }
 
+enum TagCategory {
+  PRO
+  CON
+  ARCHETYPE
+  ROLE
+  CHARACTERISTIC
+  SPECIAL
+}
+
+enum StatKey {
+  HP
+  ATK
+  DEF
+  SPEED
+  CRIT_RATE
+  CRIT_DAMAGE
+  BREAK_EFFECT
+  ENERGY_REGEN_RATE
+  EFFECT_HIT_RATE
+  EFFECT_RES
+  ELEMENTAL_DMG_BONUS
+}
+
+enum TraceStatKey {
+  HP_PERCENT
+  ATK_PERCENT
+  DEF_PERCENT
+  SPEED_FLAT
+  CRIT_RATE
+  CRIT_DAMAGE
+  BREAK_EFFECT
+  ENERGY_REGEN_RATE
+  EFFECT_HIT_RATE
+  EFFECT_RES
+  ELEMENTAL_DMG_BONUS
+}
+
 model User {
   id              Int              @id @default(autoincrement())
   name            String
@@ -28,20 +65,81 @@ model User {
 }
 
 model Character {
-  id             Int          @id @default(autoincrement())
-  name           String          @unique
+  id             Int                @id @default(autoincrement())
+  name           String             @unique
   element        String
   path           String
   role           String
+  rarity         Int                @default(5)
+  gameVersion    String             @default("3.8")
+  baseHp         Int                @default(0)
   baseAtk        Int
-  baseCritRate   Float
-  baseCritDamage Float
+  baseDef        Int                @default(0)
+  baseCritRate   Float              @default(0.05)
+  baseCritDamage Float              @default(0.5)
   baseSpeed      Int
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  aliases        CharacterAlias[]
+  tags           CharacterTag[]
+  traceStats     CharacterTraceStat[]
   userCharacters UserCharacter[]
   synergiesFrom  CharacterSynergy[] @relation("SynergyFrom")
   synergiesTo    CharacterSynergy[] @relation("SynergyTo")
+}
+
+model CharacterAlias {
+  id              Int       @id @default(autoincrement())
+  characterId     Int
+  alias           String
+  normalizedAlias String    @unique
+  locale          String?
+  source          String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@unique([characterId, alias])
+  @@index([characterId])
+}
+
+model TagDefinition {
+  key                 String       @id
+  displayLabel        String
+  category            TagCategory
+  internalDescription String?
+  isActive            Boolean      @default(true)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  characters          CharacterTag[]
+
+  @@index([category])
+}
+
+model CharacterTag {
+  characterId Int
+  tagKey      String
+  createdAt   DateTime      @default(now())
+  character   Character     @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  tag         TagDefinition @relation(fields: [tagKey], references: [key], onDelete: Cascade)
+
+  @@id([characterId, tagKey])
+  @@index([tagKey])
+}
+
+model CharacterTraceStat {
+  id          Int      @id @default(autoincrement())
+  characterId Int
+  statKey     TraceStatKey
+  value       Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@unique([characterId, statKey])
+  @@index([statKey])
 }
 
 model LightCone {
@@ -97,9 +195,18 @@ model UserCharacter {
   eidolon          Int
   lightConeName    String?
   lightConeLevel   Int?
+  stats            Json?
+  statSources      Json?
+  hp               Int?
   atk              Int
+  def              Int?
   critRate         Float
   critDamage       Float
+  breakEffect      Float?
+  energyRegenRate  Float?
+  effectHitRate    Float?
+  effectRes        Float?
+  elementalDmgBonus Float?
   speed            Int
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

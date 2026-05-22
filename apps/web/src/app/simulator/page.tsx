@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonLink } from "../../components/ui/button-link";
+import { Combobox } from "../../components/ui/combobox";
 import { Input } from "../../components/ui/input";
 import { SegmentedTabs } from "../../components/ui/segmented-tabs";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -20,6 +21,8 @@ import {
 import {
   apiRequest,
   Character,
+  CharacterStatKey,
+  CharacterStatsMap,
   CursorPage,
   DamageScenarioResponse,
   RecommendationRecord,
@@ -27,6 +30,15 @@ import {
   SimulationHistoryItem,
   UserCharacter,
 } from "../../lib/api";
+import {
+  buildCharacterStatsFormValues,
+  buildEmptyCharacterStatsFormValues,
+  CHARACTER_STAT_UI,
+  CharacterStatsFormValues,
+  formatCharacterStatChip,
+  fromStatInputValue,
+  getVisibleCharacterStatKeys,
+} from "../../lib/character-stats";
 import { toast } from "sonner";
 
 const PAGE_SIZE = 5;
@@ -38,7 +50,7 @@ const SELECT_CLASSNAME =
 const SIMULATOR_VIEW_OPTIONS = [
   {
     value: "recommend",
-    label: "Recomendacion",
+    label: "Recomendación",
     description: "Define objetivo, stats y resultado sugerido.",
   },
   {
@@ -64,17 +76,8 @@ function formatDate(value: string) {
   });
 }
 
-function asNumber(value: string): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function formatSigned(value: number, digits = 2) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}`;
-}
-
-function formatPercentInput(value: number) {
-  return String(Number((value * 100).toFixed(2)));
 }
 
 function levelBadgeVariant(level: RecommendationRecord["level"]) {
@@ -103,7 +106,7 @@ function recommendationTargetStatsSourceLabel(
     case "roster":
       return "tu roster";
     case "catalog_base":
-      return "base de catalogo";
+      return "base de catálogo";
     default:
       return "desconocida";
   }
@@ -111,6 +114,60 @@ function recommendationTargetStatsSourceLabel(
 
 function resolveErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function buildStatsPayload(
+  statKeys: CharacterStatKey[],
+  formValues: CharacterStatsFormValues,
+) {
+  const stats: CharacterStatsMap = {};
+
+  for (const statKey of statKeys) {
+    const rawValue = formValues[statKey];
+    const parsedValue = fromStatInputValue(statKey, rawValue);
+
+    if (parsedValue === null) {
+      throw new Error(
+        `Completa el campo ${CHARACTER_STAT_UI[statKey].label} con un valor válido.`,
+      );
+    }
+
+    if (
+      (statKey === "hp" ||
+        statKey === "atk" ||
+        statKey === "def" ||
+        statKey === "speed") &&
+      parsedValue < 1
+    ) {
+      throw new Error(
+        `${CHARACTER_STAT_UI[statKey].label} debe ser mayor o igual a 1.`,
+      );
+    }
+
+    if (parsedValue < 0) {
+      throw new Error(
+        `${CHARACTER_STAT_UI[statKey].label} no puede ser negativo.`,
+      );
+    }
+
+    stats[statKey] = parsedValue;
+  }
+
+  return stats;
+}
+
+function formatStatSummary(statKeys: CharacterStatKey[], stats: CharacterStatsMap) {
+  return statKeys.map((statKey) => formatCharacterStatChip(statKey, stats[statKey]));
+}
+
+function buildCharacterOptionLabel(character: Character) {
+  return `${character.name} - ${character.element} / ${character.path}`;
+}
+
+function buildCharacterSearchText(character: Character) {
+  return [character.name, ...character.aliases.map((alias) => alias.alias)].join(
+    " ",
+  );
 }
 
 export default function SimulatorPage() {
@@ -123,10 +180,8 @@ export default function SimulatorPage() {
   );
   const [useCustomRecommendationStats, setUseCustomRecommendationStats] =
     useState(false);
-  const [recommendAtkInput, setRecommendAtkInput] = useState("0");
-  const [recommendCritRateInput, setRecommendCritRateInput] = useState("0");
-  const [recommendCritDamageInput, setRecommendCritDamageInput] = useState("0");
-  const [recommendSpeedInput, setRecommendSpeedInput] = useState("0");
+  const [recommendStatInputs, setRecommendStatInputs] =
+    useState<CharacterStatsFormValues>(buildEmptyCharacterStatsFormValues());
   const [result, setResult] = useState<RecommendationResponse | null>(null);
   const [recommendationHistory, setRecommendationHistory] = useState<
     RecommendationRecord[]
@@ -152,10 +207,8 @@ export default function SimulatorPage() {
   );
   const [useCustomTeam, setUseCustomTeam] = useState(false);
   const [teammateSlots, setTeammateSlots] = useState<string[]>(["", "", ""]);
-  const [atkInput, setAtkInput] = useState("0");
-  const [critRateInput, setCritRateInput] = useState("0");
-  const [critDamageInput, setCritDamageInput] = useState("0");
-  const [speedInput, setSpeedInput] = useState("0");
+  const [scenarioStatInputs, setScenarioStatInputs] =
+    useState<CharacterStatsFormValues>(buildEmptyCharacterStatsFormValues());
   const [damageScenario, setDamageScenario] =
     useState<DamageScenarioResponse | null>(null);
   const [recommendationSearch, setRecommendationSearch] = useState("");
@@ -191,14 +244,11 @@ export default function SimulatorPage() {
         const firstEntry = ownedCharacters.items[0] ?? null;
         setScenarioCharacterId(firstEntry?.character.id ?? null);
         setTeammateSlots(["", "", ""]);
-        setAtkInput(firstEntry ? String(firstEntry.atk) : "0");
-        setCritRateInput(
-          firstEntry ? formatPercentInput(firstEntry.critRate) : "0",
+        setScenarioStatInputs(
+          firstEntry
+            ? buildCharacterStatsFormValues(firstEntry.stats)
+            : buildEmptyCharacterStatsFormValues(),
         );
-        setCritDamageInput(
-          firstEntry ? formatPercentInput(firstEntry.critDamage) : "0",
-        );
-        setSpeedInput(firstEntry ? String(firstEntry.speed) : "0");
         setRecommendationHistory(recommendations.items);
         setRecommendationNextCursor(recommendations.nextCursor);
         setSimulationHistory(simulations.items);
@@ -254,6 +304,16 @@ export default function SimulatorPage() {
     () =>
       owned.find((entry) => entry.character.id === scenarioCharacterId) ?? null,
     [owned, scenarioCharacterId],
+  );
+
+  const recommendationStatKeys = useMemo(
+    () => getVisibleCharacterStatKeys(targetCharacter ?? null),
+    [targetCharacter],
+  );
+
+  const scenarioStatKeys = useMemo(
+    () => getVisibleCharacterStatKeys(scenarioCharacterEntry?.character ?? null),
+    [scenarioCharacterEntry],
   );
 
   const filteredRecommendationHistory = useMemo(() => {
@@ -314,6 +374,26 @@ export default function SimulatorPage() {
     [teammateSlots],
   );
 
+  const targetCharacterOptions = useMemo(
+    () =>
+      catalog.map((character) => ({
+        value: String(character.id),
+        label: buildCharacterOptionLabel(character),
+        searchText: buildCharacterSearchText(character),
+      })),
+    [catalog],
+  );
+
+  const scenarioCharacterOptions = useMemo(
+    () =>
+      owned.map((entry) => ({
+        value: String(entry.character.id),
+        label: buildCharacterOptionLabel(entry.character),
+        searchText: buildCharacterSearchText(entry.character),
+      })),
+    [owned],
+  );
+
   async function loadRecommendationHistory(
     cursor: number | null,
     append: boolean,
@@ -360,38 +440,14 @@ export default function SimulatorPage() {
     try {
       const body: {
         targetCharacterId: number;
-        targetStats?: {
-          atk: number;
-          critRate: number;
-          critDamage: number;
-          speed: number;
-        };
+        targetStats?: CharacterStatsMap;
       } = { targetCharacterId };
 
       if (useCustomRecommendationStats) {
-        const targetAtk = asNumber(recommendAtkInput);
-        const targetCritRatePercent = asNumber(recommendCritRateInput);
-        const targetCritDamagePercent = asNumber(recommendCritDamageInput);
-        const targetSpeed = asNumber(recommendSpeedInput);
-
-        if (
-          targetAtk < 1 ||
-          targetCritRatePercent < 0 ||
-          targetCritRatePercent > 100 ||
-          targetCritDamagePercent < 0 ||
-          targetSpeed < 1
-        ) {
-          throw new Error(
-            "Ingresa stats objetivo validos (ATK/SPD >= 1, CR entre 0 y 100, CD >= 0).",
-          );
-        }
-
-        body.targetStats = {
-          atk: Math.round(targetAtk),
-          critRate: targetCritRatePercent,
-          critDamage: targetCritDamagePercent,
-          speed: Math.round(targetSpeed),
-        };
+        body.targetStats = buildStatsPayload(
+          recommendationStatKeys,
+          recommendStatInputs,
+        );
       }
 
       const response = await apiRequest<RecommendationResponse>(
@@ -405,7 +461,7 @@ export default function SimulatorPage() {
 
       setResult(response);
       setActiveView("recommend");
-      toast.success("Recomendacion generada con el motor ligero.");
+      toast.success("Recomendación generada con el motor ligero.");
 
       await Promise.all([
         loadRecommendationHistory(null, false),
@@ -413,7 +469,7 @@ export default function SimulatorPage() {
       ]);
     } catch (err) {
       toast.error(
-        resolveErrorMessage(err, "No fue posible simular la recomendacion"),
+        resolveErrorMessage(err, "No fue posible simular la recomendación"),
       );
     }
   }
@@ -426,31 +482,14 @@ export default function SimulatorPage() {
     setSimulatingDamage(true);
 
     try {
-      const targetAtk = asNumber(atkInput);
-      const targetCritRatePercent = asNumber(critRateInput);
-      const targetCritDamagePercent = asNumber(critDamageInput);
-      const targetSpeed = asNumber(speedInput);
       const teammateCharacterIds = useCustomTeam ? selectedTeammateIds : [];
-
-      if (
-        targetAtk < 1 ||
-        targetCritRatePercent < 0 ||
-        targetCritDamagePercent < 0 ||
-        targetSpeed < 1
-      ) {
-        throw new Error(
-          "Ingresa stats simulados validos (ATK/SPD >= 1, CR/CD >= 0).",
-        );
-      }
+      const stats = buildStatsPayload(scenarioStatKeys, scenarioStatInputs);
 
       if (useCustomTeam && teammateCharacterIds.length === 0) {
         throw new Error(
-          "Selecciona al menos 1 companero para activar el equipo personalizado.",
+          "Selecciona al menos 1 compañero para activar el equipo personalizado.",
         );
       }
-
-      const critRateBasePercent = scenarioCharacterEntry.critRate * 100;
-      const critDamageBasePercent = scenarioCharacterEntry.critDamage * 100;
 
       const response = await apiRequest<DamageScenarioResponse>(
         "/simulations/damage",
@@ -459,10 +498,7 @@ export default function SimulatorPage() {
           token: accessToken,
           body: {
             characterId: scenarioCharacterId,
-            atkDelta: Math.round(targetAtk - scenarioCharacterEntry.atk),
-            critRateDelta: targetCritRatePercent - critRateBasePercent,
-            critDamageDelta: targetCritDamagePercent - critDamageBasePercent,
-            speedDelta: Math.round(targetSpeed - scenarioCharacterEntry.speed),
+            stats,
             teammateCharacterIds: teammateCharacterIds.length
               ? teammateCharacterIds
               : undefined,
@@ -472,7 +508,7 @@ export default function SimulatorPage() {
 
       setDamageScenario(response);
       setActiveView("scenario");
-      toast.success("Escenario hipotetico simulado correctamente.");
+      toast.success("Escenario hipotético simulado correctamente.");
       await loadSimulationHistory(null, false);
     } catch (err) {
       toast.error(
@@ -489,39 +525,52 @@ export default function SimulatorPage() {
     catalogList = catalog,
   ) {
     if (!selectedId) {
-      setRecommendAtkInput("0");
-      setRecommendCritRateInput("0");
-      setRecommendCritDamageInput("0");
-      setRecommendSpeedInput("0");
+      setRecommendStatInputs(buildEmptyCharacterStatsFormValues());
       return;
     }
 
     const ownedEntry =
       ownedList.find((entry) => entry.character.id === selectedId) ?? null;
     if (ownedEntry) {
-      setRecommendAtkInput(String(ownedEntry.atk));
-      setRecommendCritRateInput(formatPercentInput(ownedEntry.critRate));
-      setRecommendCritDamageInput(formatPercentInput(ownedEntry.critDamage));
-      setRecommendSpeedInput(String(ownedEntry.speed));
+      setRecommendStatInputs(buildCharacterStatsFormValues(ownedEntry.stats));
       return;
     }
 
     const catalogEntry =
       catalogList.find((character) => character.id === selectedId) ?? null;
     if (catalogEntry) {
-      setRecommendAtkInput(String(catalogEntry.baseAtk));
-      setRecommendCritRateInput(formatPercentInput(catalogEntry.baseCritRate));
-      setRecommendCritDamageInput(
-        formatPercentInput(catalogEntry.baseCritDamage),
+      setRecommendStatInputs(
+        buildCharacterStatsFormValues(catalogEntry.defaultStats),
       );
-      setRecommendSpeedInput(String(catalogEntry.baseSpeed));
       return;
     }
 
-    setRecommendAtkInput("0");
-    setRecommendCritRateInput("0");
-    setRecommendCritDamageInput("0");
-    setRecommendSpeedInput("0");
+    setRecommendStatInputs(buildEmptyCharacterStatsFormValues());
+  }
+
+  function applyScenarioCharacterDefaults(selectedEntry: UserCharacter | null) {
+    setScenarioStatInputs(
+      selectedEntry
+        ? buildCharacterStatsFormValues(selectedEntry.stats)
+        : buildEmptyCharacterStatsFormValues(),
+    );
+  }
+
+  function handleRecommendationStatChange(
+    statKey: CharacterStatKey,
+    value: string,
+  ) {
+    setRecommendStatInputs((current) => ({
+      ...current,
+      [statKey]: value,
+    }));
+  }
+
+  function handleScenarioStatChange(statKey: CharacterStatKey, value: string) {
+    setScenarioStatInputs((current) => ({
+      ...current,
+      [statKey]: value,
+    }));
   }
 
   function handleTeammateSlotChange(slotIndex: number, value: string) {
@@ -533,7 +582,7 @@ export default function SimulatorPage() {
         (slotValue, index) => index !== slotIndex && slotValue === value,
       )
     ) {
-      toast.error("No repitas companeros dentro del mismo equipo.");
+      toast.error("No repitas compañeros dentro del mismo equipo.");
       return;
     }
 
@@ -554,7 +603,7 @@ export default function SimulatorPage() {
       toast.error(
         resolveErrorMessage(
           err,
-          "No fue posible cargar mas recomendaciones",
+          "No fue posible cargar más recomendaciones",
         ),
       );
     } finally {
@@ -570,7 +619,7 @@ export default function SimulatorPage() {
       await loadSimulationHistory(simulationNextCursor, true);
     } catch (err) {
       toast.error(
-        resolveErrorMessage(err, "No fue posible cargar mas simulaciones"),
+        resolveErrorMessage(err, "No fue posible cargar más simulaciones"),
       );
     } finally {
       setLoadingMoreSimulations(false);
@@ -585,7 +634,7 @@ export default function SimulatorPage() {
           body: { refreshToken },
         });
       }
-      toast.success("Sesion cerrada.");
+      toast.success("Sesión cerrada.");
     } finally {
       clearAuthTokens();
     }
@@ -597,8 +646,8 @@ export default function SimulatorPage() {
         <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_18%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_82%_2%,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
 
         <WindowPanel
-          title="Simulator Lab"
-          subtitle="Preparando el entorno de simulacion."
+          title="Laboratorio de simulación"
+          subtitle="Preparando el entorno de simulación."
           action={<Badge variant="neutral">Inicializando</Badge>}
         >
           <div className="grid gap-4 lg:grid-cols-[0.94fr_1.06fr]">
@@ -624,19 +673,19 @@ export default function SimulatorPage() {
         <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[24rem] bg-[radial-gradient(circle_at_20%_10%,rgba(34,193,238,0.18),transparent_42%),linear-gradient(180deg,rgba(6,10,21,0.38),transparent)]" />
 
         <WindowPanel
-          title="Simulator Lab"
-          subtitle="Necesitas iniciar sesion para acceder al motor de recomendacion."
+          title="Laboratorio de simulación"
+          subtitle="Necesitas iniciar sesión para acceder al motor de recomendación."
           action={<Badge variant="warning">Acceso requerido</Badge>}
         >
           <div className="space-y-4">
             <p className="max-w-2xl text-sm leading-7 text-[var(--ink-600)]">
               El simulador usa tu roster, tus historiales y tus stats
-              persistidos. Por eso lo protegemos dentro de la sesion.
+              persistidos. Por eso lo protegemos dentro de la sesión.
             </p>
             <div className="flex flex-wrap gap-3">
-              <ButtonLink href="/">Volver al workspace</ButtonLink>
+              <ButtonLink href="/">Volver al espacio de trabajo</ButtonLink>
               <ButtonLink href="/" variant="ghost">
-                Ir a login
+                Ir al inicio de sesión
               </ButtonLink>
             </div>
           </div>
@@ -651,9 +700,9 @@ export default function SimulatorPage() {
         <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_16%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_76%_2%,rgba(14,165,233,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
 
         <WindowPanel
-          title="Simulator Lab"
-          subtitle="Cargando catalogo, roster, recomendaciones e historial."
-          action={<Badge variant="brand">Sync</Badge>}
+          title="Laboratorio de simulación"
+          subtitle="Cargando catálogo, roster, recomendaciones e historial."
+          action={<Badge variant="brand">Sincronizando</Badge>}
         >
           <div className="grid gap-6 xl:grid-cols-[0.86fr_1.14fr]">
             <div className="space-y-3">
@@ -677,15 +726,15 @@ export default function SimulatorPage() {
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[30rem] bg-[radial-gradient(circle_at_14%_18%,rgba(34,193,238,0.24),transparent_42%),radial-gradient(circle_at_84%_2%,rgba(14,165,233,0.15),transparent_34%),radial-gradient(circle_at_50%_0%,rgba(2,132,199,0.08),transparent_38%),linear-gradient(180deg,rgba(6,10,21,0.46),transparent)]" />
 
       <WindowPanel
-        title="Simulator Lab"
-        subtitle="Motor ligero para recomendacion de pulls y simulacion de dano con contexto de equipo."
+        title="Laboratorio de simulación"
+        subtitle="Motor ligero para recomendación de pulls y simulación de daño con contexto de equipo."
         action={
           <div className="flex flex-wrap gap-2">
             <ButtonLink href="/" variant="ghost">
-              Workspace
+              Espacio de trabajo
             </ButtonLink>
             <Button variant="ghost" onClick={handleLogout}>
-              Cerrar sesion
+              Cerrar sesión
             </Button>
           </div>
         }
@@ -693,11 +742,11 @@ export default function SimulatorPage() {
         <div className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
           <div className="space-y-4">
             <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
-              Analysis deck
+              Panel de análisis
             </div>
             <h1 className="max-w-3xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
               Recomendaciones y escenarios en ventanas activas, no en una
-              pagina interminable.
+              página interminable.
             </h1>
             <p className="max-w-2xl text-base leading-7 text-[var(--ink-600)]">
               Compactamos el simulador para que puedas fijar objetivo, ajustar
@@ -722,7 +771,7 @@ export default function SimulatorPage() {
                 {owned.length}
               </p>
               <p className="mt-1 text-sm text-[var(--ink-600)]">
-                personajes disponibles para simulacion.
+                personajes disponibles para simulación.
               </p>
             </div>
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]/85 p-4">
@@ -733,36 +782,8 @@ export default function SimulatorPage() {
                 {recommendationHistory.length + simulationHistory.length}
               </p>
               <p className="mt-1 text-sm text-[var(--ink-600)]">
-                registros cargados en la sesion actual.
+                registros cargados en la sesión actual.
               </p>
-            </div>
-            <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface)]/85 p-4 sm:col-span-2">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-500)]">
-                Cambios rapidos
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <Button
-                  type="button"
-                  variant={activeView === "recommend" ? "primary" : "ghost"}
-                  onClick={() => setActiveView("recommend")}
-                >
-                  Recomendacion
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeView === "scenario" ? "primary" : "ghost"}
-                  onClick={() => setActiveView("scenario")}
-                >
-                  Escenario
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeView === "history" ? "primary" : "ghost"}
-                  onClick={() => setActiveView("history")}
-                >
-                  Historial
-                </Button>
-              </div>
             </div>
           </div>
         </div>
@@ -787,7 +808,7 @@ export default function SimulatorPage() {
         >
           <div className="space-y-6">
             <WindowPanel
-              title="Objetivo de recomendacion"
+              title="Objetivo de recomendación"
               subtitle="Selecciona el personaje y decide si quieres fijar stats manuales para evitar recomendaciones sesgadas."
               action={
                 targetCharacter ? (
@@ -799,31 +820,24 @@ export default function SimulatorPage() {
             >
               <form className="space-y-4" onSubmit={handleRecommend}>
                 <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-                  <select
-                    className={SELECT_CLASSNAME}
-                    value={targetCharacterId ?? ""}
-                    onChange={(event) => {
-                      const nextTargetId = event.target.value
-                        ? Number(event.target.value)
-                        : null;
+                  <Combobox
+                    className="w-full"
+                    options={targetCharacterOptions}
+                    value={targetCharacterId ? String(targetCharacterId) : ""}
+                    onValueChange={(nextValue) => {
+                      const nextTargetId = nextValue ? Number(nextValue) : null;
                       setTargetCharacterId(nextTargetId);
                       applyRecommendationTargetDefaults(nextTargetId);
                     }}
-                    required
-                  >
-                    <option value="">Selecciona un personaje</option>
-                    {catalog.map((character) => (
-                      <option key={character.id} value={character.id}>
-                        {character.name} - {character.element} /{" "}
-                        {character.path}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Selecciona un personaje"
+                    searchPlaceholder="Busca por nombre o alias"
+                    emptyText="No hay personajes que coincidan."
+                  />
                   <Button
                     type="submit"
                     disabled={!targetCharacterId || catalog.length === 0}
                   >
-                    Simular recomendacion
+                    Simular recomendación
                   </Button>
                 </div>
 
@@ -833,19 +847,25 @@ export default function SimulatorPage() {
                       <Badge variant="brand">{targetCharacter.element}</Badge>
                       <Badge variant="outline">{targetCharacter.path}</Badge>
                       <Badge variant="neutral">{targetCharacter.role}</Badge>
+                      {targetCharacter.tagBuckets.archetypes.map((archetype) => (
+                        <Badge key={archetype} variant="success">
+                          {archetype}
+                        </Badge>
+                      ))}
                     </div>
                     <p className="mt-3 text-sm text-[var(--ink-600)]">
-                      Base actual del catalogo: ATK {targetCharacter.baseAtk} ·
-                      CR {(targetCharacter.baseCritRate * 100).toFixed(1)}% · CD{" "}
-                      {(targetCharacter.baseCritDamage * 100).toFixed(1)}% · SPD{" "}
-                      {targetCharacter.baseSpeed}
+                      Base actual del catálogo:{" "}
+                      {formatStatSummary(
+                        recommendationStatKeys,
+                        targetCharacter.defaultStats,
+                      ).join(" · ")}
                     </p>
                   </div>
                 ) : null}
 
                 {catalog.length === 0 ? (
                   <p className="text-sm text-[var(--ink-500)]">
-                    No hay personajes disponibles en catalogo. Verifica la
+                    No hay personajes disponibles en catálogo. Verifica la
                     carga del API o el seed.
                   </p>
                 ) : null}
@@ -861,83 +881,42 @@ export default function SimulatorPage() {
                       )
                     }
                   />
-                  Usar stats personalizados para esta recomendacion
+                  Usar stats personalizados para esta recomendación
                 </label>
 
                 {useCustomRecommendationStats ? (
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                          ATK objetivo
-                        </label>
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={recommendAtkInput}
-                          onChange={(event) =>
-                            setRecommendAtkInput(event.target.value)
-                          }
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                          CR objetivo (%)
-                        </label>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={0.1}
-                          value={recommendCritRateInput}
-                          onChange={(event) =>
-                            setRecommendCritRateInput(event.target.value)
-                          }
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                          CD objetivo (%)
-                        </label>
-                        <Input
-                          type="number"
-                          min={0}
-                          step={0.1}
-                          value={recommendCritDamageInput}
-                          onChange={(event) =>
-                            setRecommendCritDamageInput(event.target.value)
-                          }
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                          SPD objetivo
-                        </label>
-                        <Input
-                          type="number"
-                          min={1}
-                          step={1}
-                          value={recommendSpeedInput}
-                          onChange={(event) =>
-                            setRecommendSpeedInput(event.target.value)
-                          }
-                          required
-                        />
-                      </div>
+                      {recommendationStatKeys.map((statKey) => (
+                        <div key={`recommend-${statKey}`}>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                            {CHARACTER_STAT_UI[statKey].label}
+                          </label>
+                          <Input
+                            type="number"
+                            min={CHARACTER_STAT_UI[statKey].min}
+                            step={CHARACTER_STAT_UI[statKey].step}
+                            value={recommendStatInputs[statKey]}
+                            onChange={(event) =>
+                              handleRecommendationStatChange(
+                                statKey,
+                                event.target.value,
+                              )
+                            }
+                            required
+                          />
+                        </div>
+                      ))}
                     </div>
                     <p className="mt-3 text-xs text-[var(--ink-500)]">
                       Si el personaje ya existe en tu roster, estos valores
-                      sobreescriben solo esta simulacion. No se guardan.
+                      sobreescriben solo esta simulación. No se guardan.
                     </p>
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)]/70 p-4 text-sm text-[var(--ink-500)]">
                     Si no activas stats manuales, el motor prioriza los stats
-                    del roster y, si no existen, cae al catalogo base.
+                    del roster y, si no existen, cae al catálogo base.
                   </div>
                 )}
               </form>
@@ -954,7 +933,7 @@ export default function SimulatorPage() {
             >
               {owned.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
-                  No tienes personajes registrados aun en tu cuenta principal.
+                  No tienes personajes registrados aún en tu cuenta principal.
                 </div>
               ) : (
                 <div className="max-h-[36rem] space-y-3 overflow-y-auto pr-1">
@@ -982,10 +961,13 @@ export default function SimulatorPage() {
                         ) : null}
                       </div>
                       <p className="mt-3 text-xs text-[var(--ink-500)]">
-                        LVL {entry.level} · E{entry.eidolon} · ATK {entry.atk} ·
-                        CR {Math.round(entry.critRate * 100)}% · CD{" "}
-                        {Math.round(entry.critDamage * 100)}% · SPD{" "}
-                        {entry.speed}
+                        LVL {entry.level} · E{entry.eidolon} ·{" "}
+                        {formatStatSummary(
+                          getVisibleCharacterStatKeys(entry.character),
+                          entry.stats,
+                        )
+                          .slice(0, 4)
+                          .join(" · ")}
                       </p>
                     </article>
                   ))}
@@ -995,11 +977,11 @@ export default function SimulatorPage() {
           </div>
 
           <WindowPanel
-            title="Resultado de recomendacion"
+            title="Resultado de recomendación"
             subtitle={
               targetCharacter
-                ? `Analisis activo sobre ${targetCharacter.name}.`
-                : "Genera una recomendacion para abrir el tablero analitico."
+                ? `Análisis activo sobre ${targetCharacter.name}.`
+                : "Genera una recomendación para abrir el tablero analítico."
             }
             action={
               result ? (
@@ -1007,7 +989,7 @@ export default function SimulatorPage() {
                   {result.recommendation.level}
                 </Badge>
               ) : (
-                <Badge variant="neutral">Esperando simulacion</Badge>
+                <Badge variant="neutral">Esperando simulación</Badge>
               )
             }
           >
@@ -1015,11 +997,11 @@ export default function SimulatorPage() {
               <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
                 <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-5">
                   <p className="text-sm font-semibold text-[var(--ink-900)]">
-                    Aun no hay recomendacion generada
+                    Aún no hay recomendación generada
                   </p>
                   <p className="mt-2 text-sm leading-7 text-[var(--ink-600)]">
                     Elige un objetivo, decide si usar stats manuales y ejecuta
-                    la simulacion. El sistema comparara sinergia, dano,
+                    la simulación. El sistema comparará sinergia, daño,
                     necesidad de rol y balance del equipo.
                   </p>
                 </div>
@@ -1045,7 +1027,7 @@ export default function SimulatorPage() {
                       3. Resultado
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
-                      Obtendras score, delta de dano, graficas y top sinergias.
+                      Obtendrás puntaje, delta de daño, gráficas y principales sinergias.
                     </p>
                   </div>
                 </div>
@@ -1055,7 +1037,7 @@ export default function SimulatorPage() {
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Score
+                      Puntaje
                     </p>
                     <p className="mt-2 text-3xl font-black text-[var(--ink-900)]">
                       {result.recommendation.score}/100
@@ -1082,7 +1064,7 @@ export default function SimulatorPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Dano equipo actual
+                      Daño equipo actual
                     </p>
                     <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
                       {result.context.damageComparison.currentTeam.totalDamage.toFixed(
@@ -1092,7 +1074,7 @@ export default function SimulatorPage() {
                   </div>
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Dano equipo propuesto
+                      Daño equipo propuesto
                     </p>
                     <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
                       {result.context.damageComparison.proposedTeam.totalDamage.toFixed(
@@ -1105,18 +1087,13 @@ export default function SimulatorPage() {
                 {result.context.appliedTargetStats ? (
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm text-[var(--ink-700)]">
                     <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Stats objetivo usados en la simulacion
+                      Stats objetivo usados en la simulación
                     </p>
                     <p className="mt-2">
-                      ATK {result.context.appliedTargetStats.atk} · CR{" "}
-                      {(
-                        result.context.appliedTargetStats.critRate * 100
-                      ).toFixed(1)}
-                      % · CD{" "}
-                      {(
-                        result.context.appliedTargetStats.critDamage * 100
-                      ).toFixed(1)}
-                      % · SPD {result.context.appliedTargetStats.speed}
+                      {formatStatSummary(
+                        result.context.appliedTargetStats.statKeys,
+                        result.context.appliedTargetStats.stats,
+                      ).join(" · ")}
                     </p>
                     <p className="mt-1 text-xs text-[var(--ink-500)]">
                       Fuente:{" "}
@@ -1152,39 +1129,40 @@ export default function SimulatorPage() {
                 <div className="grid gap-3 xl:grid-cols-3">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      Eje inferior - grafica de dano
+                      Eje inferior - gráfica de daño
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
-                      <span className="font-semibold">Actual:</span> dano
+                      <span className="font-semibold">Actual:</span> daño
                       estimado de tu mejor equipo actual.
                     </p>
                     <p className="text-sm text-[var(--ink-700)]">
-                      <span className="font-semibold">Propuesto:</span> dano
+                      <span className="font-semibold">Propuesto:</span> daño
                       estimado al incluir el personaje objetivo.
                     </p>
                   </div>
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      Eje inferior - grafica de score
+                      Eje inferior - gráfica de puntaje
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
-                      <span className="font-semibold">Base:</span> puntaje
-                      inicial. <span className="font-semibold">Sinergia:</span>{" "}
-                      compatibilidades.{" "}
-                      <span className="font-semibold">Dano:</span> impacto del
-                      delta.
+                      <span className="font-semibold">Daño:</span> impacto
+                      ponderado de la mejora o caída estimada.{" "}
+                      <span className="font-semibold">Sinergia:</span>{" "}
+                      compatibilidades con tu roster.{" "}
+                      <span className="font-semibold">Equipos:</span> cantidad
+                      de equipos compatibles.
                     </p>
                     <p className="text-sm text-[var(--ink-700)]">
                       <span className="font-semibold">Rol:</span> necesidad del
-                      equipo. <span className="font-semibold">Perfil:</span>{" "}
-                      balance ST/AoE/DoT/Burst.{" "}
-                      <span className="font-semibold">Penalizacion:</span>{" "}
-                      descuento por ownership.
+                      equipo. <span className="font-semibold">Inversión:</span>{" "}
+                      qué tan armado estás para que funcione.{" "}
+                      <span className="font-semibold">Cuenta:</span> valor
+                      general que aporta el personaje.
                     </p>
                   </div>
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      Eje inferior - contribucion por miembro
+                      Eje inferior - contribución por miembro
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
                       Cada etiqueta representa un personaje del equipo final
@@ -1259,13 +1237,14 @@ export default function SimulatorPage() {
                     <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
                       Personaje a simular
                     </p>
-                    <select
-                      className={SELECT_CLASSNAME}
-                      value={scenarioCharacterId ?? ""}
-                      onChange={(event) => {
-                        const selectedId = event.target.value
-                          ? Number(event.target.value)
-                          : null;
+                    <Combobox
+                      className="w-full"
+                      options={scenarioCharacterOptions}
+                      value={
+                        scenarioCharacterId ? String(scenarioCharacterId) : ""
+                      }
+                      onValueChange={(nextValue) => {
+                        const selectedId = nextValue ? Number(nextValue) : null;
                         setScenarioCharacterId(selectedId);
                         setTeammateSlots((current) =>
                           current.map((slotValue) =>
@@ -1284,47 +1263,32 @@ export default function SimulatorPage() {
                               ) ?? null);
 
                         if (!selectedEntry) {
-                          setAtkInput("0");
-                          setCritRateInput("0");
-                          setCritDamageInput("0");
-                          setSpeedInput("0");
+                          applyScenarioCharacterDefaults(null);
                           return;
                         }
 
-                        setAtkInput(String(selectedEntry.atk));
-                        setCritRateInput(
-                          formatPercentInput(selectedEntry.critRate),
-                        );
-                        setCritDamageInput(
-                          formatPercentInput(selectedEntry.critDamage),
-                        );
-                        setSpeedInput(String(selectedEntry.speed));
+                        applyScenarioCharacterDefaults(selectedEntry);
                       }}
-                      required
-                    >
-                      <option value="">Selecciona un personaje</option>
-                      {owned.map((entry) => (
-                        <option key={entry.id} value={entry.character.id}>
-                          {entry.character.name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Selecciona un personaje"
+                      searchPlaceholder="Busca en tu roster por nombre o alias"
+                      emptyText="No hay personajes de tu roster que coincidan."
+                    />
                   </div>
 
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-xs text-[var(--ink-700)]">
                     <p className="font-semibold text-[var(--ink-900)]">
-                      Como funciona la simulacion
+                      Cómo funciona la simulación
                     </p>
                     <p className="mt-2">
                       Ingresa los stats finales objetivo, no incrementos.
                     </p>
                     <p>
                       El sistema convierte esos valores a cambios y recalcula el
-                      dano con formula multiplicativa: Base DMG, DMG%, DEF, RES,
+                      daño con fórmula multiplicativa: Base DMG, DMG%, DEF, RES,
                       DMG Taken y Toughness.
                     </p>
                     <p className="mt-2">
-                      Puedes usar equipo automatico o forzar companeros para
+                      Puedes usar equipo automático o forzar compañeros para
                       reflejar buffs y debuffs reales.
                     </p>
                   </div>
@@ -1340,13 +1304,13 @@ export default function SimulatorPage() {
                         setUseCustomTeam(event.target.checked)
                       }
                     />
-                    Usar equipo personalizado para la simulacion
+                    Usar equipo personalizado para la simulación
                   </label>
                   <p className="mt-2 text-xs text-[var(--ink-500)]">
-                    Si no lo activas, se usa seleccion automatica del equipo.
+                    Si no lo activas, se usa selección automática del equipo.
                   </p>
                   <p className="text-xs text-[var(--ink-500)]">
-                    Si eliges solo 1-2 companeros, el backend autocompleta hasta
+                    Si eliges solo 1-2 compañeros, el backend autocompleta hasta
                     4 miembros priorizando sinergia.
                   </p>
 
@@ -1355,20 +1319,18 @@ export default function SimulatorPage() {
                       {teammateSlots.map((slotValue, index) => (
                         <div key={`teammate-slot-${index}`}>
                           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                            Companero {index + 1}
+                            Compañero {index + 1}
                           </p>
-                          <select
-                            className={SELECT_CLASSNAME}
+                          <Combobox
+                            className="w-full"
                             value={slotValue}
-                            onChange={(event) =>
-                              handleTeammateSlotChange(
-                                index,
-                                event.target.value,
-                              )
+                            onValueChange={(nextValue) =>
+                              handleTeammateSlotChange(index, nextValue)
                             }
-                          >
-                            <option value="">Sin seleccionar</option>
-                            {availableTeammates
+                            placeholder="Sin seleccionar"
+                            searchPlaceholder="Busca un compañero por nombre o alias"
+                            emptyText="No hay compañeros disponibles."
+                            options={availableTeammates
                               .filter((entry) => {
                                 if (!slotValue) {
                                   return !teammateSlots.includes(
@@ -1383,12 +1345,14 @@ export default function SimulatorPage() {
                                   )
                                 );
                               })
-                              .map((entry) => (
-                                <option key={entry.id} value={entry.character.id}>
-                                  {entry.character.name}
-                                </option>
-                              ))}
-                          </select>
+                              .map((entry) => ({
+                                value: String(entry.character.id),
+                                label: buildCharacterOptionLabel(entry.character),
+                                searchText: buildCharacterSearchText(
+                                  entry.character,
+                                ),
+                              }))}
+                          />
                         </div>
                       ))}
                     </div>
@@ -1396,60 +1360,22 @@ export default function SimulatorPage() {
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <div>
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      ATK simulado
-                    </p>
-                    <Input
-                      type="number"
-                      step={1}
-                      min={1}
-                      max={99999}
-                      value={atkInput}
-                      onChange={(event) => setAtkInput(event.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      CRIT Rate simulado (%)
-                    </p>
-                    <Input
-                      type="number"
-                      step={0.1}
-                      min={0}
-                      max={100}
-                      value={critRateInput}
-                      onChange={(event) => setCritRateInput(event.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      CRIT DMG simulado (%)
-                    </p>
-                    <Input
-                      type="number"
-                      step={0.1}
-                      min={0}
-                      max={999}
-                      value={critDamageInput}
-                      onChange={(event) =>
-                        setCritDamageInput(event.target.value)
-                      }
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-                      SPD simulado
-                    </p>
-                    <Input
-                      type="number"
-                      step={1}
-                      min={1}
-                      max={999}
-                      value={speedInput}
-                      onChange={(event) => setSpeedInput(event.target.value)}
-                    />
-                  </div>
+                  {scenarioStatKeys.map((statKey) => (
+                    <div key={`scenario-${statKey}`}>
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+                        {CHARACTER_STAT_UI[statKey].label}
+                      </p>
+                      <Input
+                        type="number"
+                        step={CHARACTER_STAT_UI[statKey].step}
+                        min={CHARACTER_STAT_UI[statKey].min}
+                        value={scenarioStatInputs[statKey]}
+                        onChange={(event) =>
+                          handleScenarioStatChange(statKey, event.target.value)
+                        }
+                      />
+                    </div>
+                  ))}
                 </div>
 
                 <Button
@@ -1471,7 +1397,7 @@ export default function SimulatorPage() {
             subtitle={
               damageScenario
                 ? damageScenario.summary
-                : "Ejecuta una simulacion para ver dano base, dano ajustado y contribucion por miembro."
+                : "Ejecuta una simulación para ver daño base, daño ajustado y contribución por miembro."
             }
             action={
               damageScenario ? (
@@ -1496,16 +1422,16 @@ export default function SimulatorPage() {
                   <p className="mt-2 text-sm leading-7 text-[var(--ink-600)]">
                     Selecciona un personaje, fija el equipo si lo necesitas y
                     define los stats finales para medir el impacto real sobre tu
-                    composicion.
+                    composición.
                   </p>
                 </div>
                 <div className="grid gap-3">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
-                      Formula real
+                      Fórmula real
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
-                      El backend recalcula el dano con factores
+                      El backend recalcula el daño con factores
                       multiplicativos, no con suma lineal.
                     </p>
                   </div>
@@ -1514,7 +1440,7 @@ export default function SimulatorPage() {
                       Equipo
                     </p>
                     <p className="mt-2 text-sm text-[var(--ink-700)]">
-                      Puedes mantener auto-team o fijar companeros concretos.
+                      Puedes mantener equipo automático o fijar compañeros concretos.
                     </p>
                   </div>
                 </div>
@@ -1526,7 +1452,7 @@ export default function SimulatorPage() {
                     Equipo{" "}
                     {damageScenario.teamContext.mode === "custom"
                       ? "personalizado"
-                      : "automatico"}
+                      : "automático"}
                     :{" "}
                     {damageScenario.teamContext.members
                       .map((member) =>
@@ -1544,11 +1470,10 @@ export default function SimulatorPage() {
                       Stats base
                     </p>
                     <p className="mt-2 text-[var(--ink-700)]">
-                      ATK {damageScenario.baseStats.atk} · CR{" "}
-                      {Math.round(damageScenario.baseStats.critRate * 100)}% ·
-                      CD{" "}
-                      {Math.round(damageScenario.baseStats.critDamage * 100)}% ·
-                      SPD {damageScenario.baseStats.speed}
+                      {formatStatSummary(
+                        damageScenario.statKeys,
+                        damageScenario.baseStats,
+                      ).join(" · ")}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
@@ -1556,37 +1481,18 @@ export default function SimulatorPage() {
                       Stats simuladas
                     </p>
                     <p className="mt-2 text-[var(--ink-700)]">
-                      ATK {damageScenario.simulatedStats.atk} · CR{" "}
-                      {Math.round(damageScenario.simulatedStats.critRate * 100)}
-                      % · CD{" "}
-                      {Math.round(
-                        damageScenario.simulatedStats.critDamage * 100,
-                      )}
-                      % · SPD {damageScenario.simulatedStats.speed}
+                      {formatStatSummary(
+                        damageScenario.statKeys,
+                        damageScenario.simulatedStats,
+                      ).join(" · ")}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
                     <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Dano base
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
-                      {damageScenario.baseTeamDamage.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
-                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Dano simulado
-                    </p>
-                    <p className="mt-2 text-lg font-semibold text-[var(--ink-900)]">
-                      {damageScenario.simulatedTeamDamage.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm">
-                    <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">
-                      Delta
+                      Cambio estimado de daño
                     </p>
                     <p
                       className={`mt-2 text-lg font-semibold ${
@@ -1605,11 +1511,11 @@ export default function SimulatorPage() {
                   proposedTotal={damageScenario.simulatedTeamDamage}
                   currentLabel="Base"
                   proposedLabel="Simulado"
-                  seriesName="Dano de escenario"
+                  seriesName="Daño de escenario"
                   helpTextByLabel={{
-                    Base: "Base: dano estimado del equipo antes de aplicar tus cambios de stats.",
+                    Base: "Base: daño estimado del equipo antes de aplicar tus cambios de stats.",
                     Simulado:
-                      "Simulado: dano estimado luego de aplicar los deltas del escenario.",
+                      "Simulado: daño estimado luego de aplicar los deltas del escenario.",
                   }}
                 />
 
@@ -1640,7 +1546,7 @@ export default function SimulatorPage() {
           >
             <div className="grid gap-3 md:grid-cols-2">
               <Input
-                placeholder="Buscar por personaje o explicacion"
+                placeholder="Buscar por personaje o explicación"
                 value={recommendationSearch}
                 onChange={(event) =>
                   setRecommendationSearch(event.target.value)
@@ -1670,7 +1576,7 @@ export default function SimulatorPage() {
 
             {recommendationHistory.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
-                Aun no hay recomendaciones guardadas.
+                Aún no hay recomendaciones guardadas.
               </div>
             ) : filteredRecommendationHistory.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
@@ -1722,7 +1628,7 @@ export default function SimulatorPage() {
                 >
                   {loadingMoreRecommendations
                     ? "Cargando..."
-                    : "Cargar mas recomendaciones"}
+                    : "Cargar más recomendaciones"}
                 </Button>
               </div>
             ) : null}
@@ -1763,7 +1669,7 @@ export default function SimulatorPage() {
 
             {simulationHistory.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
-                Aun no hay simulaciones guardadas.
+                Aún no hay simulaciones guardadas.
               </div>
             ) : filteredSimulationHistory.length === 0 ? (
               <div className="mt-4 rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-5 text-sm text-[var(--ink-500)]">
@@ -1807,11 +1713,11 @@ export default function SimulatorPage() {
                     entry.label.startsWith("damage-sim-") ? (
                       <p className="mt-2 text-xs leading-6 text-[var(--ink-600)]">
                         Personaje: {entry.payload?.characterName ?? "N/A"} ·
-                        Dano base:{" "}
+                        Daño base:{" "}
                         {typeof entry.payload?.baseTeamDamage === "number"
                           ? entry.payload.baseTeamDamage.toFixed(2)
                           : "N/A"}{" "}
-                        · Dano simulado:{" "}
+                        · Daño simulado:{" "}
                         {typeof entry.payload?.simulatedTeamDamage === "number"
                           ? entry.payload.simulatedTeamDamage.toFixed(2)
                           : "N/A"}{" "}
@@ -1823,7 +1729,7 @@ export default function SimulatorPage() {
                       </p>
                     ) : (
                       <p className="mt-2 text-xs leading-6 text-[var(--ink-600)]">
-                        Score: {entry.payload?.score ?? "N/A"} · Nivel:{" "}
+                        Puntaje: {entry.payload?.score ?? "N/A"} · Nivel:{" "}
                         {entry.payload?.level ?? "N/A"} · Sinergias:{" "}
                         {entry.payload?.synergyCount ?? 0}
                       </p>
@@ -1843,7 +1749,7 @@ export default function SimulatorPage() {
                 >
                   {loadingMoreSimulations
                     ? "Cargando..."
-                    : "Cargar mas simulaciones"}
+                    : "Cargar más simulaciones"}
                 </Button>
               </div>
             ) : null}

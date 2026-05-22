@@ -8,9 +8,11 @@ import { Card } from '../../../components/ui/card';
 import { loadAuthTokens } from '../../../lib/auth-storage';
 import {
   apiRequest,
+  CharacterStatKey,
   RecommendationDetailResponse,
   SimulationDetailResponse,
 } from '../../../lib/api';
+import { formatCharacterStatChip } from '../../../lib/character-stats';
 
 type HistoryDetailClientProps = {
   kind: 'recommendation' | 'simulation';
@@ -28,9 +30,26 @@ function formatSigned(value: number, digits = 2) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
 }
 
+function formatStatsSummary(
+  statKeys: CharacterStatKey[],
+  stats: Record<string, number | undefined> | undefined,
+) {
+  if (!stats) {
+    return 'N/A';
+  }
+
+  const resolvedKeys =
+    statKeys.length > 0
+      ? statKeys
+      : (Object.keys(stats).filter(Boolean) as CharacterStatKey[]);
+
+  return resolvedKeys
+    .map((statKey) => formatCharacterStatChip(statKey, stats[statKey]))
+    .join(' · ');
+}
+
 export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
-  const [accessToken, setAccessToken] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [accessToken] = useState(() => loadAuthTokens().accessToken);
   const [error, setError] = useState('');
   const [recommendationDetail, setRecommendationDetail] =
     useState<RecommendationDetailResponse | null>(null);
@@ -38,15 +57,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
     useState<SimulationDetailResponse | null>(null);
 
   useEffect(() => {
-    const tokens = loadAuthTokens();
-    setAccessToken(tokens.accessToken);
-  }, []);
-
-  useEffect(() => {
     if (!accessToken) return;
-
-    setLoading(true);
-    setError('');
 
     const path =
       kind === 'recommendation'
@@ -65,8 +76,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
           setRecommendationDetail(null);
         }
       })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err: Error) => setError(err.message));
   }, [accessToken, id, kind]);
 
   const simulationIsDamageScenario = useMemo(() => {
@@ -82,7 +92,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
       <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
         <Card
           title="Detalle de historial"
-          subtitle="Necesitas iniciar sesion para ver este detalle."
+          subtitle="Necesitas iniciar sesión para ver este detalle."
         >
           <Link
             className="text-sm font-semibold text-[var(--brand-700)] hover:underline"
@@ -98,7 +108,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-4 py-10 sm:px-6">
       <Card
-        title={kind === 'recommendation' ? 'Detalle de recomendacion' : 'Detalle de simulacion'}
+        title={kind === 'recommendation' ? 'Detalle de recomendación' : 'Detalle de simulación'}
         subtitle={`ID #${id}`}
       >
         <div className="flex flex-wrap items-center gap-4 text-sm">
@@ -110,8 +120,8 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
 
       {error ? <Alert tone="error">{error}</Alert> : null}
 
-      {loading ? (
-        <Card title="Cargando detalle" subtitle="Estamos recuperando la informacion seleccionada.">
+      {!error && !recommendationDetail && !simulationDetail ? (
+        <Card title="Cargando detalle" subtitle="Estamos recuperando la información seleccionada.">
           <p className="text-sm text-[var(--ink-500)]">Un momento...</p>
         </Card>
       ) : null}
@@ -123,7 +133,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
         >
           <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Score</p>
+              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Puntaje</p>
               <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
                 {recommendationDetail.score}/100
               </p>
@@ -149,7 +159,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
           </div>
 
           <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-            <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Explicacion</p>
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Explicación</p>
             <p className="mt-1 text-sm text-[var(--ink-700)]">{recommendationDetail.explanation}</p>
           </div>
         </Card>
@@ -187,15 +197,33 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
             <div className="mt-3 space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano base</p>
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats base</p>
+                  <p className="mt-1">
+                    {formatStatsSummary(
+                      (simulationDetail.payload?.statKeys ?? []) as CharacterStatKey[],
+                      simulationDetail.payload?.baseStats,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats simuladas</p>
+                  <p className="mt-1">
+                    {formatStatsSummary(
+                      (simulationDetail.payload?.statKeys ?? []) as CharacterStatKey[],
+                      simulationDetail.payload?.simulatedStats,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Daño base</p>
                   <p className="mt-1 font-semibold text-[var(--ink-900)]">
                     {typeof simulationDetail.payload?.baseTeamDamage === 'number'
                       ? simulationDetail.payload.baseTeamDamage.toFixed(2)
                       : 'N/A'}
                   </p>
                 </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Dano simulado</p>
+                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)] md:col-span-2">
+                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Daño simulado</p>
                   <p className="mt-1 font-semibold text-[var(--ink-900)]">
                     {typeof simulationDetail.payload?.simulatedTeamDamage === 'number'
                       ? simulationDetail.payload.simulatedTeamDamage.toFixed(2)
@@ -211,10 +239,10 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
                   proposedTotal={simulationDetail.payload.simulatedTeamDamage}
                   currentLabel="Base"
                   proposedLabel="Simulado"
-                  seriesName="Dano de escenario"
+                  seriesName="Daño de escenario"
                   helpTextByLabel={{
-                    Base: 'Base: dano estimado antes del ajuste.',
-                    Simulado: 'Simulado: dano estimado despues del ajuste.',
+                    Base: 'Base: daño estimado antes del ajuste.',
+                    Simulado: 'Simulado: daño estimado después del ajuste.',
                   }}
                 />
               ) : null}
@@ -222,7 +250,7 @@ export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
           ) : null}
 
           <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-            <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Payload tecnico</p>
+            <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Payload técnico</p>
             <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--ink-700)]">
               {JSON.stringify(simulationDetail.payload, null, 2)}
             </pre>

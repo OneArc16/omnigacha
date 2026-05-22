@@ -34,9 +34,9 @@ type HelpBarShapeProps = {
 
 const DAMAGE_HELP: Record<string, string> = {
   Actual:
-    'Actual: dano estimado del mejor equipo que ya puedes armar con tu cuenta.',
+    'Actual: daño estimado del mejor equipo que ya puedes armar con tu cuenta.',
   Propuesto:
-    'Propuesto: dano estimado del equipo al incluir el personaje objetivo.',
+    'Propuesto: daño estimado del equipo al incluir el personaje objetivo.',
 };
 
 function DamageHelpBarShape({
@@ -50,7 +50,7 @@ function DamageHelpBarShape({
 }: HelpBarShapeProps) {
   const helpText =
     helpTextByLabel[payload?.name ?? ''] ??
-    'Barra de comparacion de dano estimado.';
+    'Barra de comparación de daño estimado.';
 
   const iconX = x + width - 10;
   const iconY = y - 10;
@@ -82,7 +82,7 @@ export function DamageComparisonChart({
   proposedTotal,
   currentLabel = 'Actual',
   proposedLabel = 'Propuesto',
-  seriesName = 'Dano estimado',
+  seriesName = 'Daño estimado',
   helpTextByLabel = DAMAGE_HELP,
 }: DamageComparisonChartProps) {
   const data = [

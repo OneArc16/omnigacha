@@ -1,4 +1,12 @@
-import { IsInt, IsNumber, IsOptional, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsInt,
+  IsNumber,
+  IsOptional,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { UserCharacterStatsDto } from './user-character-stats.dto';
 
 export class CreateUserCharacterDto {
   @IsInt()
@@ -23,19 +31,63 @@ export class CreateUserCharacterDto {
   @Min(1)
   lightConeLevel?: number | null;
 
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UserCharacterStatsDto)
+  stats?: UserCharacterStatsDto;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
-  atk!: number;
+  hp?: number;
 
-  @IsNumber()
-  @Min(0)
-  critRate!: number;
-
-  @IsNumber()
-  @Min(0)
-  critDamage!: number;
-
+  @IsOptional()
   @IsInt()
   @Min(0)
-  speed!: number;
+  atk?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  def?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  speed?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  critRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  critDamage?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  breakEffect?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  energyRegenRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  effectHitRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  effectRes?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  elementalDmgBonus?: number;
 }

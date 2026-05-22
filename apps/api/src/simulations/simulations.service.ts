@@ -3,18 +3,37 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { RecommendationLevel } from '@prisma/client';
+import { Prisma, RecommendationLevel } from '@prisma/client';
 import {
   buildBalancedTeam,
   buildTeamWithLockedMembers,
   compareTeamDamage,
   countCompatibleTeams,
+  inferTeamRole,
 } from '../analysis/damage-calculator';
+import { hasDerivedArchetype } from '../analysis/derived-archetypes';
+import { mergeDerivedSynergyEdges } from '../analysis/catalog-synergy';
+import {
+  calculateFinalRecommendationScore,
+  calculateRecommendationFactorScores,
+  calculateRecommendationScoreBreakdown,
+} from '../analysis/recommendation-score';
 import {
   buildFallbackPathConeModifiers,
   resolveEquippedLightConeModifiers,
 } from '../analysis/light-cone-effects';
-import type { AnalysisCharacter } from '../analysis/types';
+import type { AnalysisCharacter, SynergyEdge } from '../analysis/types';
+import {
+  type CharacterStatKey,
+  type CharacterStatMap,
+  mergeCharacterStats,
+  normalizeUserStatsMap,
+} from '../characters/character-catalog';
+import {
+  characterCatalogInclude,
+  mapCharacterCatalogRow,
+  type CharacterCatalogRow,
+} from '../characters/character-presenter';
 import { paginateByCursor } from '../common/cursor-pagination';
 import { CursorPaginationQueryDto } from '../common/dto/cursor-pagination-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,23 +43,16 @@ import {
 } from './dto/recommend-character.dto';
 import { SimulateDamageDto } from './dto/simulate-damage.dto';
 
-type OwnedRosterEntry = {
-  characterId: number;
-  lightConeLevel: number | null;
-  lightConeName: string | null;
-  atk: number;
-  critRate: number;
-  critDamage: number;
-  speed: number;
-  lightCone: {
-    id: number;
-    name: string;
-    path: string;
-    rarity: number;
-    effectDescription: string | null;
-  } | null;
-  character: { name: string; path: string; role: string };
-};
+const simulationUserCharacterInclude = {
+  character: {
+    include: characterCatalogInclude,
+  },
+  lightCone: true,
+} satisfies Prisma.UserCharacterInclude;
+
+type OwnedRosterEntry = Prisma.UserCharacterGetPayload<{
+  include: typeof simulationUserCharacterInclude;
+}>;
 
 type NamedSynergyRow = {
   sourceCharacterId: number;
@@ -51,10 +63,8 @@ type NamedSynergyRow = {
 };
 
 type RecommendationTargetStatsContext = {
-  atk: number;
-  critRate: number;
-  critDamage: number;
-  speed: number;
+  statKeys: CharacterStatKey[];
+  stats: CharacterStatMap;
   source: 'manual' | 'roster' | 'catalog_base';
 };
 
@@ -124,10 +134,11 @@ export class SimulationsService {
     const [targetCharacter, ownedEntries] = await Promise.all([
       this.prisma.character.findUnique({
         where: { id: dto.targetCharacterId },
+        include: characterCatalogInclude,
       }),
       this.prisma.userCharacter.findMany({
         where: { userId },
-        include: { character: true, lightCone: true },
+        include: simulationUserCharacterInclude,
       }),
     ]);
 
@@ -155,16 +166,15 @@ export class SimulationsService {
     const baseProposedTargetCharacter =
       ownedTargetCharacter ?? targetAsAnalysisCharacter;
     const proposedTargetCharacter = normalizedTargetStats
-      ? {
-          ...baseProposedTargetCharacter,
-          ...normalizedTargetStats,
-        }
+      ? this.applyStatOverrides(
+          baseProposedTargetCharacter,
+          normalizedTargetStats,
+        )
       : baseProposedTargetCharacter;
+    const targetStatKeys = this.getRelevantStatKeys(proposedTargetCharacter);
     const appliedTargetStats: RecommendationTargetStatsContext = {
-      atk: proposedTargetCharacter.atk,
-      critRate: proposedTargetCharacter.critRate,
-      critDamage: proposedTargetCharacter.critDamage,
-      speed: proposedTargetCharacter.speed,
+      statKeys: targetStatKeys,
+      stats: this.pickStatSubset(proposedTargetCharacter.stats, targetStatKeys),
       source: normalizedTargetStats
         ? 'manual'
         : ownedTargetCharacter
@@ -184,7 +194,7 @@ export class SimulationsService {
       ...new Set(proposedRoster.map((member) => member.id)),
     ];
 
-    const synergyRows: NamedSynergyRow[] =
+    const explicitSynergyRows: NamedSynergyRow[] =
       await this.prisma.characterSynergy.findMany({
         where: {
           sourceCharacterId: { in: allCandidateIds },
@@ -195,9 +205,27 @@ export class SimulationsService {
           targetCharacter: { select: { name: true } },
         },
       });
+    const synergyRows = mergeDerivedSynergyEdges(
+      proposedRoster,
+      explicitSynergyRows,
+      (source, target, weight) => ({
+        sourceCharacterId: source.id,
+        targetCharacterId: target.id,
+        weight,
+        sourceCharacter: { name: source.name },
+        targetCharacter: { name: target.name },
+      }),
+    );
 
-    const sameRoleCount = ownedEntries.filter(
-      (entry) => entry.character.role === targetCharacter.role,
+    const targetRole = inferTeamRole(
+      proposedTargetCharacter.path,
+      proposedTargetCharacter.roleText,
+      proposedTargetCharacter.tagKeys,
+    );
+    const sameRoleCount = ownedRoster.filter(
+      (member) =>
+        inferTeamRole(member.path, member.roleText, member.tagKeys) ===
+        targetRole,
     ).length;
 
     const currentTeam = buildBalancedTeam(ownedRoster, undefined, synergyRows);
@@ -227,36 +255,30 @@ export class SimulationsService {
               targetSynergyPairs.length,
           );
 
-    const roleNeedBonus = sameRoleCount === 0 ? 12 : 0;
-    const ownershipPenalty = alreadyOwned ? 25 : 0;
-    const boundedDamageDelta = this.clamp(
-      damageComparison.deltaPercent,
-      -40,
-      80,
+    const compatibleTeams = countCompatibleTeams(
+      proposedRoster,
+      targetCharacter.id,
+      synergyRows,
     );
-    const damageImpact = boundedDamageDelta * 0.58;
-    const synergyImpact = synergyScore * 0.28;
-    const profileCompositionImpact =
-      (damageComparison.proposedTeam.profileCoverageBonus -
-        damageComparison.currentTeam.profileCoverageBonus) *
-      100 *
-      0.35;
-    const baseScore = 25;
-
-    const score = Math.max(
-      0,
-      Math.min(
-        100,
-        Math.round(
-          baseScore +
-            synergyImpact +
-            damageImpact +
-            roleNeedBonus +
-            profileCompositionImpact -
-            ownershipPenalty,
-        ),
-      ),
-    );
+    const singleStrongLinkSupportOpportunity =
+      targetRole === 'support' &&
+      hasDerivedArchetype(proposedTargetCharacter, 'hypercarry_support') &&
+      compatibleTeams === 0 &&
+      targetSynergyPairs.length === 1 &&
+      synergyScore >= 85;
+    const factorScores = calculateRecommendationFactorScores({
+      deltaPercent: damageComparison.deltaPercent,
+      synergyScore,
+      synergyCount: targetSynergyPairs.length,
+      compatibleTeams,
+      sameRoleCount,
+      alreadyOwned,
+      targetRole,
+      singleStrongLinkSupportOpportunity,
+    });
+    const scoringBreakdown =
+      calculateRecommendationScoreBreakdown(factorScores);
+    const score = calculateFinalRecommendationScore(scoringBreakdown);
 
     const level = this.toLevel(score);
 
@@ -268,27 +290,18 @@ export class SimulationsService {
       sameRoleCount,
       alreadyOwned,
       topSynergies,
+      compatibleTeams,
       currentTeamDamage: damageComparison.currentTeam.totalDamage,
       proposedTeamDamage: damageComparison.proposedTeam.totalDamage,
       deltaPercent: damageComparison.deltaPercent,
       currentProfileCoverage: damageComparison.currentTeam.profileCoverageBonus,
       proposedProfileCoverage:
         damageComparison.proposedTeam.profileCoverageBonus,
+      factorScores,
+      singleStrongLinkSupportOpportunity,
     });
 
     const estimatedDeltaDmg = Number(damageComparison.deltaPercent.toFixed(2));
-    const compatibleTeams = countCompatibleTeams(
-      proposedRoster,
-      targetCharacter.id,
-    );
-    const scoringBreakdown = {
-      baseScore,
-      synergyImpact: Number(synergyImpact.toFixed(2)),
-      damageImpact: Number(damageImpact.toFixed(2)),
-      roleNeedBonus,
-      profileCompositionImpact: Number(profileCompositionImpact.toFixed(2)),
-      ownershipPenalty,
-    };
 
     const recommendation = await this.prisma.recommendation.create({
       data: {
@@ -314,6 +327,7 @@ export class SimulationsService {
           synergyScore,
           sameRoleCount,
           alreadyOwned,
+          singleStrongLinkSupportOpportunity,
           currentTeamDamage: Number(
             damageComparison.currentTeam.totalDamage.toFixed(2),
           ),
@@ -321,6 +335,7 @@ export class SimulationsService {
             damageComparison.proposedTeam.totalDamage.toFixed(2),
           ),
           deltaPercent: damageComparison.deltaPercent,
+          factorScores,
           scoringBreakdown,
           score,
           level,
@@ -336,6 +351,7 @@ export class SimulationsService {
         appliedTargetStats,
         topSynergies,
         damageComparison,
+        factorScores,
         scoringBreakdown,
       },
     };
@@ -344,7 +360,7 @@ export class SimulationsService {
   async simulateDamage(userId: number, dto: SimulateDamageDto) {
     const ownedEntries = (await this.prisma.userCharacter.findMany({
       where: { userId },
-      include: { character: true, lightCone: true },
+      include: simulationUserCharacterInclude,
     })) as OwnedRosterEntry[];
 
     if (ownedEntries.length === 0) {
@@ -373,15 +389,30 @@ export class SimulationsService {
     );
 
     const baseCharacter = this.mapOwnedEntryToAnalysisCharacter(targetEntry);
-    const simulatedCharacter = this.applyStatAdjustments(baseCharacter, dto);
+    const simulatedStats = this.normalizeManualStats(dto.stats);
+    const simulatedCharacter = this.applyStatOverrides(
+      baseCharacter,
+      simulatedStats,
+    );
+    const statKeys = this.getRelevantStatKeys(baseCharacter);
 
     const rosterIds = [...new Set(fullRoster.map((member) => member.id))];
-    const synergyRows = await this.prisma.characterSynergy.findMany({
-      where: {
-        sourceCharacterId: { in: rosterIds },
-        targetCharacterId: { in: rosterIds },
-      },
-    });
+    const explicitSynergyRows: SynergyEdge[] =
+      await this.prisma.characterSynergy.findMany({
+        where: {
+          sourceCharacterId: { in: rosterIds },
+          targetCharacterId: { in: rosterIds },
+        },
+      });
+    const synergyRows = mergeDerivedSynergyEdges(
+      fullRoster,
+      explicitSynergyRows,
+      (source, target, weight) => ({
+        sourceCharacterId: source.id,
+        targetCharacterId: target.id,
+        weight,
+      }),
+    );
 
     const baseTeam = customTeamEntries
       ? buildTeamWithLockedMembers(
@@ -424,19 +455,9 @@ export class SimulationsService {
       characterId: targetEntry.characterId,
       characterName: targetEntry.character.name,
       teamContext,
-      adjustments: this.normalizeAdjustments(dto),
-      baseStats: {
-        atk: baseCharacter.atk,
-        critRate: baseCharacter.critRate,
-        critDamage: baseCharacter.critDamage,
-        speed: baseCharacter.speed,
-      },
-      simulatedStats: {
-        atk: simulatedCharacter.atk,
-        critRate: simulatedCharacter.critRate,
-        critDamage: simulatedCharacter.critDamage,
-        speed: simulatedCharacter.speed,
-      },
+      statKeys,
+      baseStats: this.pickStatSubset(baseCharacter.stats, statKeys),
+      simulatedStats: this.pickStatSubset(simulatedCharacter.stats, statKeys),
       baseTeamDamage: Number(
         damageComparison.currentTeam.totalDamage.toFixed(2),
       ),
@@ -465,10 +486,10 @@ export class SimulationsService {
       summary:
         `Escenario ${targetEntry.character.name}: ${payload.baseTeamDamage.toFixed(2)} -> ` +
         `${payload.simulatedTeamDamage.toFixed(2)} (${payload.deltaPercent.toFixed(2)}%). ` +
-        `Equipo ${teamContext.mode === 'custom' ? 'personalizado' : 'automatico'} aplicado ` +
+        `Equipo ${teamContext.mode === 'custom' ? 'personalizado' : 'automático'} aplicado ` +
         `(${teamContext.members.map((member) => member.name).join(', ')}).` +
         (customTeamEntries && customTeamEntries.length < 4
-          ? ' Se autocompleto con prioridad de sinergia hasta 4 miembros.'
+          ? ' Se autocompletó con prioridad de sinergia hasta 4 miembros.'
           : ''),
     };
   }
@@ -541,37 +562,73 @@ export class SimulationsService {
     sameRoleCount: number;
     alreadyOwned: boolean;
     topSynergies: string[];
+    compatibleTeams: number;
     currentTeamDamage: number;
     proposedTeamDamage: number;
     deltaPercent: number;
     currentProfileCoverage: number;
     proposedProfileCoverage: number;
+    factorScores: {
+      damageScore: number;
+      synergyScore: number;
+      teamScore: number;
+      roleScore: number;
+      investmentScore: number;
+      accountValueScore: number;
+    };
+    singleStrongLinkSupportOpportunity: boolean;
   }) {
     const roleLine =
       input.sameRoleCount === 0
-        ? 'Tu cuenta necesita mas cobertura de este rol.'
+        ? 'Tu cuenta necesita más cobertura de este rol.'
         : `Ya tienes ${input.sameRoleCount} personaje(s) del mismo rol, por eso el bonus de rol es menor.`;
 
     const ownershipLine = input.alreadyOwned
-      ? 'Ya lo tienes en la cuenta, asi que la conveniencia para pull baja.'
-      : 'No lo tienes aun, por lo que la adquisicion puede abrir nuevas opciones.';
+      ? 'Ya lo tienes en la cuenta, así que la conveniencia para pull baja.'
+      : 'No lo tienes aún, por lo que la adquisición puede abrir nuevas opciones.';
 
     const synergyLine =
       input.topSynergies.length > 0
         ? `Sinergias detectadas: ${input.topSynergies.join('; ')}.`
         : 'No se detectaron sinergias directas fuertes con tu roster actual.';
 
-    const damageLine = `Dano estimado: actual ${input.currentTeamDamage.toFixed(2)} vs propuesto ${input.proposedTeamDamage.toFixed(2)} (delta ${input.deltaPercent.toFixed(2)}%).`;
+    const teamLine = (() => {
+      if (input.singleStrongLinkSupportOpportunity) {
+        return 'Solo se detectó un núcleo fuerte con un carry concreto, pero no varios equipos estables con tu roster actual.';
+      }
+
+      if (input.compatibleTeams >= 3) {
+        return 'Puede entrar en 3 o más equipos compatibles dentro de tu cuenta.';
+      }
+
+      if (input.compatibleTeams === 2) {
+        return 'Puede entrar en 2 equipos compatibles dentro de tu cuenta.';
+      }
+
+      if (input.compatibleTeams === 1) {
+        return 'Solo se detectó 1 equipo compatible claro con tu roster actual.';
+      }
+
+      return 'No se detectaron equipos compatibles estables con tu roster actual.';
+    })();
+
+    const factorLine = `Factores: daño ${input.factorScores.damageScore}/100, sinergia ${input.factorScores.synergyScore}/100, equipos ${input.factorScores.teamScore}/100, rol ${input.factorScores.roleScore}/100, inversión ${input.factorScores.investmentScore}/100, valor de cuenta ${input.factorScores.accountValueScore}/100.`;
+    const damageLine = `Daño estimado: actual ${input.currentTeamDamage.toFixed(2)} vs propuesto ${input.proposedTeamDamage.toFixed(2)} (delta ${input.deltaPercent.toFixed(2)}%).`;
     const profileLine = `Cobertura de perfiles: ${input.currentProfileCoverage.toFixed(2)} -> ${input.proposedProfileCoverage.toFixed(2)}.`;
     const lightConeLine =
-      'El calculo integra bonificaciones ofensivas de conos de luz equipados (stats base + efecto compatible por via).';
+      'El cálculo integra bonificaciones ofensivas de conos de luz equipados (stats base + efecto compatible por vía).';
 
-    return `${input.targetName} obtiene un score de ${input.score}/100. ${damageLine} ${profileLine} ${roleLine} ${ownershipLine} ${synergyLine} ${lightConeLine}`;
+    return `${input.targetName} obtiene un puntaje de ${input.score}/100. ${damageLine} ${profileLine} ${teamLine} ${roleLine} ${ownershipLine} ${synergyLine} ${factorLine} ${lightConeLine}`;
   }
 
   private mapOwnedEntryToAnalysisCharacter(
     entry: OwnedRosterEntry,
   ): AnalysisCharacter {
+    const catalogCharacter = mapCharacterCatalogRow(entry.character);
+    const mergedStats = mergeCharacterStats(catalogCharacter.defaultStats, {
+      ...this.readLegacyStats(entry),
+      ...this.parseCharacterStats(entry.stats),
+    });
     const equippedLightCone = entry.lightCone
       ? {
           name: entry.lightCone.name,
@@ -598,91 +655,161 @@ export class SimulationsService {
     return {
       id: entry.characterId,
       name: entry.character.name,
+      element: entry.character.element,
       path: entry.character.path,
       roleText: entry.character.role,
-      atk: entry.atk,
-      critRate: entry.critRate,
-      critDamage: entry.critDamage,
-      speed: entry.speed,
+      tagKeys: catalogCharacter.tagBuckets.all,
+      statProfile: catalogCharacter.statProfile,
+      stats: mergedStats,
+      hp: mergedStats.hp ?? catalogCharacter.baseHp,
+      atk: mergedStats.atk ?? entry.atk,
+      def: mergedStats.def ?? catalogCharacter.baseDef,
+      critRate: mergedStats.crit_rate ?? entry.critRate,
+      critDamage: mergedStats.crit_damage ?? entry.critDamage,
+      breakEffect: mergedStats.break_effect ?? 0,
+      energyRegenRate: mergedStats.energy_regen_rate ?? 0,
+      effectHitRate: mergedStats.effect_hit_rate ?? 0,
+      effectRes: mergedStats.effect_res ?? 0,
+      elementalDmgBonus: mergedStats.elemental_dmg_bonus ?? 0,
+      speed: mergedStats.speed ?? entry.speed,
       modifiers,
     };
   }
 
   private mapTargetToAnalysisCharacter(
-    targetCharacter: {
-      id: number;
-      name: string;
-      path: string;
-      role: string;
-      baseAtk: number;
-      baseCritRate: number;
-      baseCritDamage: number;
-      baseSpeed: number;
-    },
-    targetStatsOverride?: Pick<
-      AnalysisCharacter,
-      'atk' | 'critRate' | 'critDamage' | 'speed'
-    > | null,
+    targetCharacter: CharacterCatalogRow,
+    targetStatsOverride?: CharacterStatMap | null,
   ): AnalysisCharacter {
+    const catalogCharacter = mapCharacterCatalogRow(targetCharacter);
+    const mergedStats = mergeCharacterStats(
+      catalogCharacter.defaultStats,
+      targetStatsOverride,
+    );
+
     return {
       id: targetCharacter.id,
       name: targetCharacter.name,
+      element: targetCharacter.element,
       path: targetCharacter.path,
       roleText: targetCharacter.role,
-      atk: targetStatsOverride?.atk ?? targetCharacter.baseAtk,
-      critRate: targetStatsOverride?.critRate ?? targetCharacter.baseCritRate,
-      critDamage:
-        targetStatsOverride?.critDamage ?? targetCharacter.baseCritDamage,
-      speed: targetStatsOverride?.speed ?? targetCharacter.baseSpeed,
+      tagKeys: catalogCharacter.tagBuckets.all,
+      statProfile: catalogCharacter.statProfile,
+      stats: mergedStats,
+      hp: mergedStats.hp ?? catalogCharacter.baseHp,
+      atk: mergedStats.atk ?? catalogCharacter.baseAtk,
+      def: mergedStats.def ?? catalogCharacter.baseDef,
+      critRate: mergedStats.crit_rate ?? catalogCharacter.baseCritRate,
+      critDamage: mergedStats.crit_damage ?? catalogCharacter.baseCritDamage,
+      breakEffect: mergedStats.break_effect ?? 0,
+      energyRegenRate: mergedStats.energy_regen_rate ?? 0,
+      effectHitRate: mergedStats.effect_hit_rate ?? 0,
+      effectRes: mergedStats.effect_res ?? 0,
+      elementalDmgBonus: mergedStats.elemental_dmg_bonus ?? 0,
+      speed: mergedStats.speed ?? catalogCharacter.baseSpeed,
       modifiers: buildFallbackPathConeModifiers(targetCharacter.path),
     };
   }
 
   private normalizeRecommendationTargetStats(
     targetStats?: RecommendTargetStatsDto,
-  ): Pick<
-    AnalysisCharacter,
-    'atk' | 'critRate' | 'critDamage' | 'speed'
-  > | null {
+  ): CharacterStatMap | null {
     if (!targetStats) {
       return null;
     }
 
-    return {
-      atk: Math.max(1, Math.round(targetStats.atk)),
-      critRate: this.clamp(targetStats.critRate / 100, 0, 1),
-      critDamage: Math.max(0, targetStats.critDamage / 100),
-      speed: Math.max(1, Math.round(targetStats.speed)),
-    };
+    return this.normalizeManualStats(targetStats);
   }
 
-  private applyStatAdjustments(
+  private applyStatOverrides(
     baseCharacter: AnalysisCharacter,
-    dto: SimulateDamageDto,
+    overrideStats: CharacterStatMap,
   ): AnalysisCharacter {
-    const critRateDeltaRatio = dto.critRateDelta / 100;
-    const critDamageDeltaRatio = dto.critDamageDelta / 100;
-
+    const mergedStats = mergeCharacterStats(baseCharacter.stats, overrideStats);
     return {
       ...baseCharacter,
-      atk: Math.max(1, baseCharacter.atk + dto.atkDelta),
-      critRate: this.clamp(baseCharacter.critRate + critRateDeltaRatio, 0, 1),
-      critDamage: Math.max(0, baseCharacter.critDamage + critDamageDeltaRatio),
-      speed: Math.max(1, baseCharacter.speed + dto.speedDelta),
+      stats: mergedStats,
+      hp: mergedStats.hp ?? baseCharacter.hp,
+      atk: mergedStats.atk ?? baseCharacter.atk,
+      def: mergedStats.def ?? baseCharacter.def,
+      critRate: mergedStats.crit_rate ?? baseCharacter.critRate,
+      critDamage: mergedStats.crit_damage ?? baseCharacter.critDamage,
+      breakEffect: mergedStats.break_effect ?? baseCharacter.breakEffect,
+      energyRegenRate:
+        mergedStats.energy_regen_rate ?? baseCharacter.energyRegenRate,
+      effectHitRate: mergedStats.effect_hit_rate ?? baseCharacter.effectHitRate,
+      effectRes: mergedStats.effect_res ?? baseCharacter.effectRes,
+      elementalDmgBonus:
+        mergedStats.elemental_dmg_bonus ?? baseCharacter.elementalDmgBonus,
+      speed: mergedStats.speed ?? baseCharacter.speed,
     };
   }
 
-  private normalizeAdjustments(dto: SimulateDamageDto) {
-    return {
-      atkDelta: dto.atkDelta,
-      critRateDelta: Number(dto.critRateDelta.toFixed(2)),
-      critDamageDelta: Number(dto.critDamageDelta.toFixed(2)),
-      speedDelta: dto.speedDelta,
-    };
+  private normalizeManualStats(stats: CharacterStatMap): CharacterStatMap {
+    return normalizeUserStatsMap(stats);
   }
 
-  private clamp(value: number, min: number, max: number) {
-    return Math.max(min, Math.min(max, value));
+  private getRelevantStatKeys(
+    character: AnalysisCharacter,
+  ): CharacterStatKey[] {
+    return [
+      ...new Set([
+        ...character.statProfile.prioritizedStatKeys,
+        ...character.statProfile.enabledStatKeys,
+      ]),
+    ];
+  }
+
+  private pickStatSubset(
+    stats: CharacterStatMap,
+    statKeys: CharacterStatKey[],
+  ): CharacterStatMap {
+    const subset: CharacterStatMap = {};
+
+    for (const statKey of statKeys) {
+      const value = stats[statKey];
+      if (typeof value === 'number') {
+        subset[statKey] = value;
+      }
+    }
+
+    return subset;
+  }
+
+  private parseCharacterStats(
+    rawStats: Prisma.JsonValue | null,
+  ): CharacterStatMap {
+    if (!rawStats || typeof rawStats !== 'object' || Array.isArray(rawStats)) {
+      return {};
+    }
+
+    const normalized: CharacterStatMap = {};
+    for (const key of Object.keys(rawStats)) {
+      const statKey = key as CharacterStatKey;
+      const value = rawStats[key];
+      if (typeof value !== 'number') {
+        continue;
+      }
+
+      normalized[statKey] = value;
+    }
+
+    return normalizeUserStatsMap(normalized);
+  }
+
+  private readLegacyStats(entry: OwnedRosterEntry): CharacterStatMap {
+    return normalizeUserStatsMap({
+      hp: entry.hp ?? undefined,
+      atk: entry.atk,
+      def: entry.def ?? undefined,
+      speed: entry.speed,
+      crit_rate: entry.critRate,
+      crit_damage: entry.critDamage,
+      break_effect: entry.breakEffect ?? undefined,
+      energy_regen_rate: entry.energyRegenRate ?? undefined,
+      effect_hit_rate: entry.effectHitRate ?? undefined,
+      effect_res: entry.effectRes ?? undefined,
+      elemental_dmg_bonus: entry.elementalDmgBonus ?? undefined,
+    });
   }
 
   private resolveCustomTeamEntries(
@@ -705,7 +832,7 @@ export class SimulationsService {
 
     if (teammateCharacterIds.includes(targetCharacterId)) {
       throw new BadRequestException(
-        'El personaje objetivo no puede repetirse dentro de los companeros.',
+        'El personaje objetivo no puede repetirse dentro de los compañeros.',
       );
     }
 
@@ -716,7 +843,7 @@ export class SimulationsService {
 
       if (!teammate) {
         throw new NotFoundException(
-          `El companero con id ${characterId} no existe en tu roster.`,
+          `El compañero con id ${characterId} no existe en tu roster.`,
         );
       }
 

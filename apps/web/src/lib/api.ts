@@ -1,4 +1,5 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
@@ -10,15 +11,26 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method ?? "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    cache: "no-store",
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: options.method ?? "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new Error(
+      `No fue posible conectar con la API en ${API_BASE_URL}. Verifica que la API esté encendida y que el origen del frontend esté permitido por CORS.`,
+      {
+        cause: error,
+      },
+    );
+  }
 
   if (!response.ok) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -77,21 +89,27 @@ export type RecommendationResponse = {
     targetCharacter: Character;
     ownedCount: number;
     appliedTargetStats?: {
-      atk: number;
-      critRate: number;
-      critDamage: number;
-      speed: number;
+      statKeys: CharacterStatKey[];
+      stats: CharacterStatsMap;
       source: "manual" | "roster" | "catalog_base";
     };
     topSynergies: string[];
     damageComparison: DamageComparison;
+    factorScores: {
+      damageScore: number;
+      synergyScore: number;
+      teamScore: number;
+      roleScore: number;
+      investmentScore: number;
+      accountValueScore: number;
+    };
     scoringBreakdown: {
-      baseScore: number;
-      synergyImpact: number;
-      damageImpact: number;
-      roleNeedBonus: number;
-      profileCompositionImpact: number;
-      ownershipPenalty: number;
+      damageContribution: number;
+      synergyContribution: number;
+      teamContribution: number;
+      roleContribution: number;
+      investmentContribution: number;
+      accountValueContribution: number;
     };
   };
 };
@@ -126,6 +144,7 @@ export type DamageScenarioResponse = {
     name: string;
   };
   type: "damage_scenario";
+  statKeys: CharacterStatKey[];
   teamContext?: {
     mode: "auto" | "custom";
     members: Array<{
@@ -134,24 +153,8 @@ export type DamageScenarioResponse = {
       isTarget: boolean;
     }>;
   };
-  adjustments: {
-    atkDelta: number;
-    critRateDelta: number;
-    critDamageDelta: number;
-    speedDelta: number;
-  };
-  baseStats: {
-    atk: number;
-    critRate: number;
-    critDamage: number;
-    speed: number;
-  };
-  simulatedStats: {
-    atk: number;
-    critRate: number;
-    critDamage: number;
-    speed: number;
-  };
+  baseStats: CharacterStatsMap;
+  simulatedStats: CharacterStatsMap;
   baseTeamDamage: number;
   simulatedTeamDamage: number;
   deltaAbsolute: number;
@@ -174,6 +177,72 @@ export type RecommendationRecord = {
 
 export type RecommendationDetailResponse = RecommendationRecord;
 
+export type CharacterStatKey =
+  | "hp"
+  | "atk"
+  | "def"
+  | "speed"
+  | "crit_rate"
+  | "crit_damage"
+  | "break_effect"
+  | "energy_regen_rate"
+  | "effect_hit_rate"
+  | "effect_res"
+  | "elemental_dmg_bonus";
+
+export type CharacterStatsMap = Partial<Record<CharacterStatKey, number>>;
+
+export type CharacterTag = {
+  key: string;
+  displayLabel: string;
+  category:
+    | "PRO"
+    | "CON"
+    | "ARCHETYPE"
+    | "ROLE"
+    | "CHARACTERISTIC"
+    | "SPECIAL";
+};
+
+export type CharacterTagBuckets = {
+  pros: string[];
+  cons: string[];
+  archetypes: string[];
+  roles: string[];
+  characteristics: string[];
+  special: string[];
+  all: string[];
+};
+
+export type CharacterStatProfile = {
+  prioritizedStatKeys: CharacterStatKey[];
+  enabledStatKeys: CharacterStatKey[];
+};
+
+export type CharacterAlias = {
+  alias: string;
+  normalizedAlias: string;
+  locale?: string | null;
+  source?: string | null;
+};
+
+export type CharacterTraceStat = {
+  id: number;
+  statKey:
+    | "HP_PERCENT"
+    | "ATK_PERCENT"
+    | "DEF_PERCENT"
+    | "SPEED_FLAT"
+    | "CRIT_RATE"
+    | "CRIT_DAMAGE"
+    | "BREAK_EFFECT"
+    | "ENERGY_REGEN_RATE"
+    | "EFFECT_HIT_RATE"
+    | "EFFECT_RES"
+    | "ELEMENTAL_DMG_BONUS";
+  value: number;
+};
+
 export type SimulationHistoryItem = {
   id: number;
   userId: number;
@@ -182,10 +251,8 @@ export type SimulationHistoryItem = {
     type?: "recommendation" | "damage_scenario";
     targetCharacterId?: number;
     targetStats?: {
-      atk?: number;
-      critRate?: number;
-      critDamage?: number;
-      speed?: number;
+      statKeys?: CharacterStatKey[];
+      stats?: CharacterStatsMap;
       source?: "manual" | "roster" | "catalog_base";
     };
     synergyCount?: number;
@@ -198,12 +265,7 @@ export type SimulationHistoryItem = {
     deltaAbsolute?: number;
     characterId?: number;
     characterName?: string;
-    adjustments?: {
-      atkDelta?: number;
-      critRateDelta?: number;
-      critDamageDelta?: number;
-      speedDelta?: number;
-    };
+    statKeys?: CharacterStatKey[];
     teamContext?: {
       mode?: "auto" | "custom";
       members?: Array<{
@@ -212,27 +274,31 @@ export type SimulationHistoryItem = {
         isTarget?: boolean;
       }>;
     };
-    baseStats?: {
-      atk?: number;
-      critRate?: number;
-      critDamage?: number;
-      speed?: number;
+    adjustments?: {
+      atkDelta?: number;
+      critRateDelta?: number;
+      critDamageDelta?: number;
+      speedDelta?: number;
     };
-    simulatedStats?: {
-      atk?: number;
-      critRate?: number;
-      critDamage?: number;
-      speed?: number;
-    };
+    baseStats?: CharacterStatsMap;
+    simulatedStats?: CharacterStatsMap;
     baseTeamDamage?: number;
     simulatedTeamDamage?: number;
+    factorScores?: {
+      damageScore?: number;
+      synergyScore?: number;
+      teamScore?: number;
+      roleScore?: number;
+      investmentScore?: number;
+      accountValueScore?: number;
+    };
     scoringBreakdown?: {
-      baseScore?: number;
-      synergyImpact?: number;
-      damageImpact?: number;
-      roleNeedBonus?: number;
-      profileCompositionImpact?: number;
-      ownershipPenalty?: number;
+      damageContribution?: number;
+      synergyContribution?: number;
+      teamContribution?: number;
+      roleContribution?: number;
+      investmentContribution?: number;
+      accountValueContribution?: number;
     };
     score?: number;
     level?:
@@ -252,10 +318,20 @@ export type Character = {
   element: string;
   path: string;
   role: string;
+  rarity: number;
+  gameVersion: string;
+  baseHp: number;
   baseAtk: number;
+  baseDef: number;
   baseCritRate: number;
   baseCritDamage: number;
   baseSpeed: number;
+  aliases: CharacterAlias[];
+  tags: CharacterTag[];
+  tagBuckets: CharacterTagBuckets;
+  traceStats: CharacterTraceStat[];
+  statProfile: CharacterStatProfile;
+  defaultStats: CharacterStatsMap;
 };
 
 export type LightCone = {
@@ -268,26 +344,32 @@ export type LightCone = {
 
 export type UserCharacter = {
   id: number;
+  userId: number;
   level: number;
   eidolon: number;
   lightConeId?: number | null;
   lightConeName?: string;
   lightConeLevel?: number;
+  hp?: number | null;
   atk: number;
+  def?: number | null;
   critRate: number;
   critDamage: number;
+  breakEffect?: number | null;
+  energyRegenRate?: number | null;
+  effectHitRate?: number | null;
+  effectRes?: number | null;
+  elementalDmgBonus?: number | null;
   speed: number;
+  stats: CharacterStatsMap;
+  statSources: Partial<
+    Record<CharacterStatKey, "catalog_default" | "user_input" | "legacy_migrated">
+  >;
   lightCone?: {
     id: number;
     name: string;
     path: string;
     rarity: number;
   } | null;
-  character: {
-    id: number;
-    name: string;
-    element: string;
-    path: string;
-    role: string;
-  };
+  character: Character;
 };

@@ -1,8 +1,15 @@
 'use client';
 
 import { FormEvent, useMemo } from 'react';
-import { Character, LightCone } from '../../lib/api';
+import { Character, CharacterStatKey, LightCone } from '../../lib/api';
+import {
+  CHARACTER_STAT_UI,
+  CharacterStatsFormValues,
+  formatCharacterStatChip,
+  getVisibleCharacterStatKeys,
+} from '../../lib/character-stats';
 import { Button } from '../ui/button';
+import { Combobox } from '../ui/combobox';
 import { Input } from '../ui/input';
 
 export type UserCharacterFormValues = {
@@ -10,22 +17,21 @@ export type UserCharacterFormValues = {
   lightConeId: string;
   level: string;
   eidolon: string;
-  atk: string;
-  critRate: string;
-  critDamage: string;
-  speed: string;
+  stats: CharacterStatsFormValues;
   lightConeLevel: string;
 };
 
 type UserCharacterFormProps = {
   catalog: Character[];
   lightCones: LightCone[];
+  selectedCharacter: Character | null;
   values: UserCharacterFormValues;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onFieldChange: (
-    field: keyof UserCharacterFormValues,
+    field: Exclude<keyof UserCharacterFormValues, 'stats'>,
     value: string,
   ) => void;
+  onStatFieldChange: (field: CharacterStatKey, value: string) => void;
   submitLabel: string;
   isSubmitting?: boolean;
   showManualToggle?: boolean;
@@ -37,94 +43,26 @@ type UserCharacterFormProps = {
   onCancel?: () => void;
 };
 
-type StatFieldConfig = {
-  field: keyof UserCharacterFormValues;
-  label: string;
-  placeholder: string;
-  type?: 'text' | 'number';
-  min?: number;
-  max?: number;
-  step?: number | string;
-  required?: boolean;
-};
-
-const statFields: StatFieldConfig[] = [
-  {
-    field: 'level',
-    label: 'Nivel',
-    placeholder: 'Ej: 80',
-    type: 'number',
-    min: 1,
-    step: 1,
-    required: true,
-  },
-  {
-    field: 'eidolon',
-    label: 'Eidolon',
-    placeholder: 'Ej: 0',
-    type: 'number',
-    min: 0,
-    step: 1,
-    required: true,
-  },
-  {
-    field: 'atk',
-    label: 'ATK',
-    placeholder: 'Ej: 3200',
-    type: 'number',
-    min: 0,
-    step: 1,
-    required: true,
-  },
-  {
-    field: 'critRate',
-    label: 'CRIT Rate',
-    placeholder: 'Ej: 0.70',
-    type: 'number',
-    min: 0,
-    step: '0.01',
-    required: true,
-  },
-  {
-    field: 'critDamage',
-    label: 'CRIT DMG',
-    placeholder: 'Ej: 1.40',
-    type: 'number',
-    min: 0,
-    step: '0.01',
-    required: true,
-  },
-  {
-    field: 'speed',
-    label: 'Velocidad',
-    placeholder: 'Ej: 134',
-    type: 'number',
-    min: 0,
-    step: 1,
-    required: true,
-  },
-];
-
-function renderField(
-  config: StatFieldConfig,
+function renderStatField(
+  statKey: CharacterStatKey,
   values: UserCharacterFormValues,
-  onFieldChange: UserCharacterFormProps['onFieldChange'],
+  onStatFieldChange: UserCharacterFormProps['onStatFieldChange'],
 ) {
+  const config = CHARACTER_STAT_UI[statKey];
+
   return (
     <label
-      key={config.field}
+      key={statKey}
       className="space-y-1 text-xs font-medium text-[var(--ink-700)]"
     >
       {config.label}
       <Input
-        type={config.type ?? 'text'}
+        type="number"
         min={config.min}
-        max={config.max}
         step={config.step}
-        value={values[config.field]}
-        onChange={(event) => onFieldChange(config.field, event.target.value)}
+        value={values.stats[statKey]}
+        onChange={(event) => onStatFieldChange(statKey, event.target.value)}
         placeholder={config.placeholder}
-        required={config.required}
       />
     </label>
   );
@@ -133,9 +71,11 @@ function renderField(
 export function UserCharacterForm({
   catalog,
   lightCones,
+  selectedCharacter,
   values,
   onSubmit,
   onFieldChange,
+  onStatFieldChange,
   submitLabel,
   isSubmitting = false,
   showManualToggle = false,
@@ -154,24 +94,35 @@ export function UserCharacterForm({
         : lightCones,
     [characterPath, lightCones],
   );
+  const visibleStatKeys = useMemo(
+    () => getVisibleCharacterStatKeys(selectedCharacter),
+    [selectedCharacter],
+  );
+  const characterOptions = useMemo(
+    () =>
+      catalog.map((character) => ({
+        value: String(character.id),
+        label: `${character.name} - ${character.element} / ${character.path}`,
+        searchText: [character.name, ...character.aliases.map((alias) => alias.alias)].join(
+          ' ',
+        ),
+      })),
+    [catalog],
+  );
 
   return (
     <form className="space-y-4" onSubmit={onSubmit}>
       <div className="flex flex-col gap-3 md:flex-row">
-        <select
-          className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)] md:min-w-96 disabled:cursor-not-allowed disabled:bg-[var(--surface-2)]"
+        <Combobox
+          className="w-full md:min-w-96"
+          options={characterOptions}
           value={values.characterId}
-          onChange={(event) => onFieldChange('characterId', event.target.value)}
+          onValueChange={(nextValue) => onFieldChange('characterId', nextValue)}
           disabled={disableCharacterSelect}
-          required
-        >
-          <option value="">Selecciona un personaje</option>
-          {catalog.map((character) => (
-            <option key={character.id} value={String(character.id)}>
-              {character.name} - {character.element} / {character.path}
-            </option>
-          ))}
-        </select>
+          placeholder="Selecciona un personaje"
+          searchPlaceholder="Busca por nombre o alias"
+          emptyText="No hay personajes que coincidan."
+        />
 
         <div className="flex gap-3">
           <Button type="submit" disabled={isSubmitting || !values.characterId}>
@@ -185,6 +136,34 @@ export function UserCharacterForm({
         </div>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+          Nivel
+          <Input
+            type="number"
+            min={1}
+            step={1}
+            value={values.level}
+            onChange={(event) => onFieldChange('level', event.target.value)}
+            placeholder="Ej: 80"
+            required
+          />
+        </label>
+
+        <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+          Eidolon
+          <Input
+            type="number"
+            min={0}
+            step={1}
+            value={values.eidolon}
+            onChange={(event) => onFieldChange('eidolon', event.target.value)}
+            placeholder="Ej: 0"
+            required
+          />
+        </label>
+      </div>
+
       {showManualToggle ? (
         <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
           <label className="flex items-center gap-2 text-sm font-medium text-[var(--ink-800)]">
@@ -196,10 +175,11 @@ export function UserCharacterForm({
                 onUseManualStatsChange?.(event.target.checked)
               }
             />
-            Quiero digitar manualmente los stats de este personaje
+            Quiero digitar manualmente los stats relevantes de este personaje
           </label>
           <p className="mt-1 text-xs text-[var(--ink-500)]">
-            Si no activas esta opcion, se guardaran los stats base del catalogo.
+            Si no activas esta opción, se guardarán valores por defecto del catálogo 3.8
+            usando base + rastros compatibles.
           </p>
         </div>
       ) : null}
@@ -244,10 +224,36 @@ export function UserCharacterForm({
         </div>
         <p className="text-xs text-[var(--ink-500)]">
           {characterPath
-            ? `Solo se muestran conos compatibles con la via ${characterPath}.`
-            : 'Selecciona un personaje para filtrar conos compatibles por via.'}
+            ? `Solo se muestran conos compatibles con la vía ${characterPath}.`
+            : 'Selecciona un personaje para filtrar conos compatibles por vía.'}
         </p>
       </div>
+
+      {selectedCharacter ? (
+        <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
+              Perfil del personaje
+            </p>
+            <span className="rounded-full border border-[var(--line)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ink-500)]">
+              {selectedCharacter.role}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {visibleStatKeys.map((statKey) => (
+              <span
+                key={statKey}
+                className="rounded-full border border-[var(--line)] bg-[var(--surface-3)] px-2.5 py-1 text-xs text-[var(--ink-700)]"
+              >
+                {formatCharacterStatChip(
+                  statKey,
+                  selectedCharacter.defaultStats?.[statKey],
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {showStats ? (
         <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
@@ -255,7 +261,9 @@ export function UserCharacterForm({
             Stats a guardar
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {statFields.map((field) => renderField(field, values, onFieldChange))}
+            {visibleStatKeys.map((statKey) =>
+              renderStatField(statKey, values, onStatFieldChange),
+            )}
           </div>
         </div>
       ) : null}

@@ -1,3 +1,8 @@
+import type {
+  CharacterStatMap,
+  CharacterStatProfile,
+} from '../characters/character-catalog';
+
 export type TeamRole = 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
 
 export type DamageProfile =
@@ -33,10 +38,21 @@ export type AnalysisCharacter = {
   id: number;
   name: string;
   path: string;
+  element: string;
   roleText: string;
+  tagKeys: string[];
+  statProfile: CharacterStatProfile;
+  stats: CharacterStatMap;
+  hp: number;
   atk: number;
+  def: number;
   critRate: number;
   critDamage: number;
+  breakEffect: number;
+  energyRegenRate: number;
+  effectHitRate: number;
+  effectRes: number;
+  elementalDmgBonus: number;
   speed: number;
   modifiers: AnalysisOffenseModifiers;
 };

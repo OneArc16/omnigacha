@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "OmniGacha MVP",
-  description: "Sistema inteligente de recomendacion para Honkai: Star Rail.",
+  description: "Sistema inteligente de recomendación para Honkai: Star Rail.",
 };
 
 export default function RootLayout({

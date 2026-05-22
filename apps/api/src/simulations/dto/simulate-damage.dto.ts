@@ -3,36 +3,21 @@ import {
   ArrayUnique,
   IsArray,
   IsInt,
-  IsNumber,
   IsOptional,
-  Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { UserCharacterStatsDto } from '../../user-characters/dto/user-character-stats.dto';
 
 export class SimulateDamageDto {
   @IsInt()
   @Min(1)
   characterId!: number;
 
-  @IsInt()
-  @Min(-9999)
-  @Max(9999)
-  atkDelta!: number;
-
-  @IsNumber()
-  @Min(-100)
-  @Max(100)
-  critRateDelta!: number;
-
-  @IsNumber()
-  @Min(-300)
-  @Max(300)
-  critDamageDelta!: number;
-
-  @IsInt()
-  @Min(-200)
-  @Max(200)
-  speedDelta!: number;
+  @ValidateNested()
+  @Type(() => UserCharacterStatsDto)
+  stats!: UserCharacterStatsDto;
 
   @IsOptional()
   @IsArray()

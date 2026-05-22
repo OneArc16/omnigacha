@@ -11,12 +11,12 @@ import {
 } from 'recharts';
 
 type ScoreBreakdown = {
-  baseScore: number;
-  synergyImpact: number;
-  damageImpact: number;
-  roleNeedBonus: number;
-  profileCompositionImpact: number;
-  ownershipPenalty: number;
+  damageContribution: number;
+  synergyContribution: number;
+  teamContribution: number;
+  roleContribution: number;
+  investmentContribution: number;
+  accountValueContribution: number;
 };
 
 type ScoreBreakdownChartProps = {
@@ -36,14 +36,16 @@ type HelpBarShapeProps = {
 };
 
 const SCORE_HELP: Record<string, string> = {
-  Base: 'Base: puntaje inicial del modelo antes de aplicar factores.',
-  Sinergia: 'Sinergia: impacto de compatibilidad con tu roster.',
-  Dano: 'Dano: impacto del cambio de dano estimado entre equipos.',
-  Rol: 'Rol: bonus si el rol del objetivo cubre una necesidad en la cuenta.',
-  Perfil:
-    'Perfil: bonus por mejor cobertura entre ST/AoE/DoT/Burst en la composicion.',
-  Penalizacion:
-    'Penalizacion: descuento aplicado cuando ya posees el personaje objetivo.',
+  Daño: 'Daño: aporte ponderado del factor de mejora o caída estimada de daño.',
+  Sinergia:
+    'Sinergia: aporte ponderado de compatibilidades detectadas con tu roster.',
+  Equipos:
+    'Equipos: aporte ponderado de la cantidad de equipos compatibles que el objetivo habilita.',
+  Rol: 'Rol: aporte ponderado según qué tan necesario es ese rol en tu cuenta.',
+  Inversión:
+    'Inversión: aporte ponderado según cuántas piezas clave ya tienes para que funcione.',
+  Cuenta:
+    'Cuenta: aporte ponderado del valor general que agrega el personaje a tu cuenta.',
 };
 
 function ScoreHelpBarShape({
@@ -56,7 +58,7 @@ function ScoreHelpBarShape({
   payload,
 }: HelpBarShapeProps) {
   const helpText =
-    SCORE_HELP[payload?.factor ?? ''] ?? 'Factor de impacto dentro del score.';
+    SCORE_HELP[payload?.factor ?? ''] ?? 'Factor de impacto dentro del puntaje.';
 
   const iconX = x + width - 10;
   const iconY = value >= 0 ? y - 10 : y + height + 10;
@@ -85,12 +87,12 @@ function ScoreHelpBarShape({
 
 export function ScoreBreakdownChart({ breakdown }: ScoreBreakdownChartProps) {
   const data = [
-    { factor: 'Base', value: breakdown.baseScore },
-    { factor: 'Sinergia', value: breakdown.synergyImpact },
-    { factor: 'Dano', value: breakdown.damageImpact },
-    { factor: 'Rol', value: breakdown.roleNeedBonus },
-    { factor: 'Perfil', value: breakdown.profileCompositionImpact },
-    { factor: 'Penalizacion', value: -breakdown.ownershipPenalty },
+    { factor: 'Daño', value: breakdown.damageContribution },
+    { factor: 'Sinergia', value: breakdown.synergyContribution },
+    { factor: 'Equipos', value: breakdown.teamContribution },
+    { factor: 'Rol', value: breakdown.roleContribution },
+    { factor: 'Inversión', value: breakdown.investmentContribution },
+    { factor: 'Cuenta', value: breakdown.accountValueContribution },
   ];
 
   return (
@@ -103,7 +105,7 @@ export function ScoreBreakdownChart({ breakdown }: ScoreBreakdownChartProps) {
           <Tooltip />
           <Bar
             dataKey="value"
-            name="Impacto en score"
+            name="Impacto en puntaje"
             fill="#0ea5e9"
             radius={[8, 8, 0, 0]}
             shape={<ScoreHelpBarShape />}

@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navItems = [
-  { href: "/", label: "Workspace" },
-  { href: "/simulator", label: "Simulator" },
+  { href: "/", label: "Espacio de trabajo" },
+  { href: "/simulator", label: "Simulador" },
 ];
 
 export function AppHeader() {
@@ -22,7 +22,7 @@ export function AppHeader() {
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--brand-500),#31d1f6)] text-sm font-black text-slate-950">
               OG
             </span>
-            <span className="truncate">OmniGacha Control Room</span>
+            <span className="truncate">Centro de control OmniGacha</span>
           </Link>
         </div>
 

@@ -5,6 +5,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { handlePrismaError } from '../common/prisma-errors';
 import { CreateCharacterDto } from './dto/create-character.dto';
 import { UpdateCharacterDto } from './dto/update-character.dto';
+import {
+  characterCatalogInclude,
+  mapCharacterCatalogRow,
+} from './character-presenter';
 
 @Injectable()
 export class CharactersService {
@@ -22,19 +26,26 @@ export class CharactersService {
     const limit = query.limit ?? 20;
     const rows = await this.prisma.character.findMany({
       where: query.cursor ? { id: { gt: query.cursor } } : undefined,
+      include: characterCatalogInclude,
       orderBy: { id: 'asc' },
       take: limit + 1,
     });
 
-    return paginateByCursor(rows, limit);
+    return paginateByCursor(
+      rows.map((row) => mapCharacterCatalogRow(row)),
+      limit,
+    );
   }
 
   async findOne(id: number) {
-    const character = await this.prisma.character.findUnique({ where: { id } });
+    const character = await this.prisma.character.findUnique({
+      where: { id },
+      include: characterCatalogInclude,
+    });
     if (!character) {
       throw new NotFoundException('Character not found');
     }
-    return character;
+    return mapCharacterCatalogRow(character);
   }
 
   async update(id: number, dto: UpdateCharacterDto) {

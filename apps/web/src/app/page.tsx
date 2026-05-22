@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { ButtonLink } from '../components/ui/button-link';
 import { Input } from '../components/ui/input';
+import { PasswordInput } from '../components/ui/password-input';
 import { SegmentedTabs } from '../components/ui/segmented-tabs';
 import { Skeleton } from '../components/ui/skeleton';
 import { WindowPanel } from '../components/ui/window-panel';
@@ -24,11 +25,20 @@ import {
   apiRequest,
   AuthResponse,
   Character,
+  CharacterStatKey,
+  CharacterStatsMap,
   CursorPage,
   DashboardSummaryResponse,
   LightCone,
   UserCharacter,
 } from '../lib/api';
+import {
+  buildCharacterStatsFormValues,
+  buildEmptyCharacterStatsFormValues,
+  formatCharacterStatChip,
+  fromStatInputValue,
+  getVisibleCharacterStatKeys,
+} from '../lib/character-stats';
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -56,10 +66,7 @@ type UserCharacterMutationPayload = {
   characterId: number;
   level: number;
   eidolon: number;
-  atk: number;
-  critRate: number;
-  critDamage: number;
-  speed: number;
+  stats?: CharacterStatsMap;
   lightConeId: number | null;
   lightConeLevel: number | null;
 };
@@ -95,10 +102,9 @@ function buildCreateCharacterFormValues(
     lightConeId: '',
     level: '80',
     eidolon: '0',
-    atk: character ? String(character.baseAtk) : '0',
-    critRate: character ? String(character.baseCritRate) : '0',
-    critDamage: character ? String(character.baseCritDamage) : '0',
-    speed: character ? String(character.baseSpeed) : '100',
+    stats: character
+      ? buildCharacterStatsFormValues(character.defaultStats)
+      : buildEmptyCharacterStatsFormValues(),
     lightConeLevel: '',
   };
 }
@@ -116,10 +122,7 @@ function buildEditCharacterFormValues(
     lightConeId: resolvedLightConeId ? String(resolvedLightConeId) : '',
     level: String(entry.level),
     eidolon: String(entry.eidolon),
-    atk: String(entry.atk),
-    critRate: String(entry.critRate),
-    critDamage: String(entry.critDamage),
-    speed: String(entry.speed),
+    stats: buildCharacterStatsFormValues(entry.stats),
     lightConeLevel:
       resolvedLightConeId && entry.lightConeLevel
         ? String(entry.lightConeLevel)
@@ -129,58 +132,56 @@ function buildEditCharacterFormValues(
 
 function buildUserCharacterPayload(
   values: UserCharacterFormValues,
+  character: Character | null,
+  includeManualStats: boolean,
 ): UserCharacterMutationPayload {
   const characterId = Number(values.characterId);
   const level = Number(values.level);
   const eidolon = Number(values.eidolon);
-  const atk = Number(values.atk);
-  const critRate = Number(values.critRate);
-  const critDamage = Number(values.critDamage);
-  const speed = Number(values.speed);
   const lightConeIdText = values.lightConeId.trim();
 
-  const parsedValues = [
-    characterId,
-    level,
-    eidolon,
-    atk,
-    critRate,
-    critDamage,
-    speed,
-  ];
+  const parsedValues = [characterId, level, eidolon];
 
   if (parsedValues.some((value) => !Number.isFinite(value))) {
-    throw new Error('Completa el formulario con valores numericos validos.');
+    throw new Error('Completa el formulario con valores numéricos válidos.');
   }
 
-  if (
-    characterId < 1 ||
-    level < 1 ||
-    eidolon < 0 ||
-    atk < 0 ||
-    critRate < 0 ||
-    critDamage < 0 ||
-    speed < 0
-  ) {
-    throw new Error('Los stats deben respetar los minimos permitidos.');
+  if (characterId < 1 || level < 1 || eidolon < 0) {
+    throw new Error('Los campos base deben respetar los mínimos permitidos.');
   }
 
   const payload: UserCharacterMutationPayload = {
     characterId: Math.trunc(characterId),
     level: Math.trunc(level),
     eidolon: Math.trunc(eidolon),
-    atk: Math.trunc(atk),
-    critRate,
-    critDamage,
-    speed: Math.trunc(speed),
     lightConeId: null,
     lightConeLevel: null,
   };
 
+  if (includeManualStats) {
+    if (!character) {
+      throw new Error('Selecciona un personaje antes de guardar stats.');
+    }
+
+    const stats: CharacterStatsMap = {};
+    for (const statKey of getVisibleCharacterStatKeys(character)) {
+      const rawValue = values.stats[statKey];
+      const parsedValue = fromStatInputValue(statKey, rawValue);
+
+      if (parsedValue === null) {
+        throw new Error(`Completa el campo ${statKey} con un valor válido.`);
+      }
+
+      stats[statKey] = parsedValue;
+    }
+
+    payload.stats = stats;
+  }
+
   if (lightConeIdText) {
     const lightConeId = Number(lightConeIdText);
     if (!Number.isFinite(lightConeId) || lightConeId < 1) {
-      throw new Error('Selecciona un cono de luz valido.');
+      throw new Error('Selecciona un cono de luz válido.');
     }
     payload.lightConeId = Math.trunc(lightConeId);
   }
@@ -189,7 +190,7 @@ function buildUserCharacterPayload(
   if (lightConeLevelText) {
     const lightConeLevel = Number(lightConeLevelText);
     if (!Number.isFinite(lightConeLevel) || lightConeLevel < 1) {
-      throw new Error('El nivel del cono debe ser un numero mayor o igual a 1.');
+      throw new Error('El nivel del cono debe ser un número mayor o igual a 1.');
     }
     if (payload.lightConeId == null) {
       throw new Error('Selecciona un cono de luz antes de guardar su nivel.');
@@ -198,6 +199,13 @@ function buildUserCharacterPayload(
   }
 
   return payload;
+}
+
+function formatRosterSummary(entry: UserCharacter) {
+  return getVisibleCharacterStatKeys(entry.character)
+    .slice(0, 4)
+    .map((statKey) => formatCharacterStatChip(statKey, entry.stats[statKey]))
+    .join(' · ');
 }
 
 function resolveErrorMessage(error: unknown, fallback: string) {
@@ -321,7 +329,7 @@ export default function Home() {
   }
 
   function handleCreateFormFieldChange(
-    field: keyof UserCharacterFormValues,
+    field: Exclude<keyof UserCharacterFormValues, 'stats'>,
     value: string,
   ) {
     if (field === 'characterId') {
@@ -347,7 +355,7 @@ export default function Home() {
   }
 
   function handleEditingFormFieldChange(
-    field: keyof UserCharacterFormValues,
+    field: Exclude<keyof UserCharacterFormValues, 'stats'>,
     value: string,
   ) {
     setEditingForm((current) =>
@@ -358,6 +366,36 @@ export default function Home() {
               ? { lightConeId: '', lightConeLevel: '' }
               : {}),
             [field]: value,
+          }
+        : current,
+    );
+  }
+
+  function handleCreateFormStatFieldChange(
+    field: CharacterStatKey,
+    value: string,
+  ) {
+    setCreateForm((current) => ({
+      ...current,
+      stats: {
+        ...current.stats,
+        [field]: value,
+      },
+    }));
+  }
+
+  function handleEditingFormStatFieldChange(
+    field: CharacterStatKey,
+    value: string,
+  ) {
+    setEditingForm((current) =>
+      current
+        ? {
+            ...current,
+            stats: {
+              ...current.stats,
+              [field]: value,
+            },
           }
         : current,
     );
@@ -407,7 +445,7 @@ export default function Home() {
         refreshToken: response.refreshToken,
       });
       toast.success(
-        mode === 'register' ? 'Cuenta creada con exito.' : 'Sesion iniciada.',
+        mode === 'register' ? 'Cuenta creada con éxito.' : 'Sesión iniciada.',
       );
       form.reset();
     } catch (err) {
@@ -423,7 +461,11 @@ export default function Home() {
     setIsCreatingCharacter(true);
 
     try {
-      const payload = buildUserCharacterPayload(createForm);
+      const payload = buildUserCharacterPayload(
+        createForm,
+        selectedCharacter,
+        useManualStats,
+      );
 
       await apiRequest<UserCharacter>('/user-characters', {
         method: 'POST',
@@ -451,7 +493,11 @@ export default function Home() {
     setIsUpdatingCharacter(true);
 
     try {
-      const payload = buildUserCharacterPayload(editingForm);
+      const payload = buildUserCharacterPayload(
+        editingForm,
+        editingEntry.character,
+        true,
+      );
       await apiRequest<UserCharacter>(`/user-characters/${editingCharacterId}`, {
         method: 'PATCH',
         token: accessToken,
@@ -541,13 +587,13 @@ export default function Home() {
       );
 
       toast.success(
-        'Contrasena actualizada. Inicia sesion con tu nueva contrasena.',
+        'Contraseña actualizada. Inicia sesión con tu nueva contraseña.',
       );
       setAuthView('login');
       form.reset();
     } catch (err) {
       toast.error(
-        resolveErrorMessage(err, 'No fue posible cambiar la contrasena'),
+        resolveErrorMessage(err, 'No fue posible cambiar la contraseña'),
       );
     }
   }
@@ -560,7 +606,7 @@ export default function Home() {
           body: { refreshToken },
         });
       }
-      toast.success('Sesion cerrada.');
+      toast.success('Sesión cerrada.');
     } finally {
       handleLocalLogout();
     }
@@ -570,7 +616,7 @@ export default function Home() {
     {
       value: 'login',
       label: 'Entrar',
-      description: 'Accede rapido a tu workspace.',
+      description: 'Accede rápido a tu espacio de trabajo.',
     },
     {
       value: 'register',
@@ -580,7 +626,7 @@ export default function Home() {
     {
       value: 'security',
       label: 'Recuperar acceso',
-      description: 'Actualiza la contrasena por correo.',
+      description: 'Actualiza la contraseña por correo.',
     },
   ] satisfies {
     value: AuthView;
@@ -592,7 +638,7 @@ export default function Home() {
     {
       value: 'overview',
       label: 'Resumen',
-      description: 'Vista rapida del estado de tu cuenta.',
+      description: 'Vista rápida del estado de tu cuenta.',
     },
     {
       value: 'roster',
@@ -602,7 +648,7 @@ export default function Home() {
     {
       value: 'account',
       label: 'Cuenta',
-      description: 'Perfil, seguridad y cierre de sesion.',
+      description: 'Perfil, seguridad y cierre de sesión.',
     },
   ] satisfies {
     value: WorkspaceView;
@@ -615,17 +661,17 @@ export default function Home() {
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_15%_20%,rgba(34,193,238,0.22),transparent_42%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.4),transparent)]" />
 
       <WindowPanel
-        title="OmniGacha Workspace"
-        subtitle="Decisiones inteligentes para tus pulls sin perderte en hojas de calculo."
+        title="Espacio de trabajo OmniGacha"
+        subtitle="Decisiones inteligentes para tus pulls sin perderte en hojas de cálculo."
         action={<Badge variant="brand">MVP activo</Badge>}
       >
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-4">
             <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
-              Control room
+              Centro de control
             </div>
             <h1 className="max-w-2xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
-              Planea tu roster, evalua pulls y simula dano desde una sola mesa
+              Planea tu roster, evalúa pulls y simula daño desde una sola mesa
               de trabajo.
             </h1>
           </div>
@@ -647,7 +693,7 @@ export default function Home() {
                     Acceso
                   </p>
                   <h2 className="mt-2 text-2xl font-bold text-[var(--ink-900)]">
-                    Entra a tu workspace
+                    Entra a tu espacio de trabajo
                   </h2>
                 </div>
 
@@ -675,10 +721,9 @@ export default function Home() {
                       placeholder="Correo"
                       required
                     />
-                    <Input
+                    <PasswordInput
                       name="password"
-                      type="password"
-                      placeholder="Contrasena (8+)"
+                      placeholder="Contraseña (8+)"
                       required
                     />
                     <Button type="submit" className="w-full">
@@ -698,14 +743,13 @@ export default function Home() {
                       placeholder="Correo"
                       required
                     />
-                    <Input
+                    <PasswordInput
                       name="password"
-                      type="password"
-                      placeholder="Contrasena"
+                      placeholder="Contraseña"
                       required
                     />
                     <Button type="submit" className="w-full">
-                      Iniciar sesion
+                      Iniciar sesión
                     </Button>
                   </form>
                 ) : null}
@@ -724,11 +768,11 @@ export default function Home() {
                     <Input
                       name="newPassword"
                       type="password"
-                      placeholder="Nueva contrasena (8+)"
+                      placeholder="Nueva contraseña (8+)"
                       required
                     />
                     <Button type="submit" variant="ghost" className="w-full">
-                      Actualizar contrasena
+                      Actualizar contraseña
                     </Button>
                   </form>
                 ) : null}
@@ -737,14 +781,14 @@ export default function Home() {
           ) : (
             <div className="rounded-[26px] border border-[var(--line)] bg-[var(--surface)]/90 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
-                Sesion activa
+                Sesión activa
               </p>
               <h2 className="mt-2 text-2xl font-bold text-[var(--ink-900)]">
-                {me ? `${me.name}, tu mesa esta lista.` : 'Tu cuenta esta lista.'}
+                {me ? `${me.name}, tu mesa está lista.` : 'Tu cuenta está lista.'}
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-600)]">
                 Usa las ventanas de abajo para editar el roster, revisar el
-                dashboard o saltar al simulador sin salir del flujo.
+                tablero o saltar al simulador sin salir del flujo.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -752,7 +796,7 @@ export default function Home() {
                   Abrir simulador
                 </ButtonLink>
                 <Button variant="ghost" className="w-full" onClick={handleLogout}>
-                  Cerrar sesion
+                  Cerrar sesión
                 </Button>
               </div>
 
@@ -764,7 +808,7 @@ export default function Home() {
                   {me?.email}
                 </p>
                 <p className="mt-1 text-sm text-[var(--ink-600)]">
-                  Ultimo score visible:{' '}
+                  Último puntaje visible:{' '}
                   {dashboardSummary?.lastRecommendation?.score ?? 'sin datos'}.
                 </p>
               </div>
@@ -784,8 +828,8 @@ export default function Home() {
           {workspaceView === 'overview' ? (
             <section className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
               <WindowPanel
-                title="Command Deck"
-                subtitle="Tu resumen rapido para decidir el siguiente movimiento."
+                title="Panel de control"
+                subtitle="Tu resumen rápido para decidir el siguiente movimiento."
               >
                 {pageError ? (
                   <div className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-3 text-sm text-rose-200">
@@ -802,13 +846,13 @@ export default function Home() {
                       {dashboardSummary?.totalCharacters ?? myCharacters.length}
                     </p>
                     <p className="mt-1 text-sm text-[var(--ink-600)]">
-                      personajes listos para analisis y simulacion.
+                      personajes listos para análisis y simulación.
                     </p>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <ButtonLink href="/simulator" className="w-full">
-                      Ir al simulator
+                      Ir al simulador
                     </ButtonLink>
                     <Button
                       variant="ghost"
@@ -820,16 +864,15 @@ export default function Home() {
                   </div>
 
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4 text-sm text-[var(--ink-600)]">
-                    El dashboard y el roster ahora estan separados por
+                    El tablero y el roster ahora están separados por
                     ventanas. La idea es que abras solo el contexto que
-                    necesitas, no toda la pagina a la vez.
+                    necesitas, no toda la página a la vez.
                   </div>
                 </div>
               </WindowPanel>
 
               <WindowPanel
-                title="Dashboard"
-                subtitle="KPIs y accesos rapidos del MVP."
+                title="Tablero"
               >
                 <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
@@ -873,7 +916,7 @@ export default function Home() {
 
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
                     <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-500)]">
-                      Ultima recomendacion
+                      Última recomendación
                     </p>
                     {!dashboardSummary ? (
                       <div className="mt-3 space-y-2">
@@ -896,7 +939,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <p className="mt-3 text-sm text-[var(--ink-500)]">
-                        Aun no tienes recomendaciones guardadas.
+                        Aún no tienes recomendaciones guardadas.
                       </p>
                     )}
                   </div>
@@ -911,10 +954,10 @@ export default function Home() {
                     Registrar personaje
                   </Button>
                   <ButtonLink href="/simulator" variant="ghost">
-                    Abrir analisis
+                    Abrir análisis
                   </ButtonLink>
                   <ButtonLink href="/simulator#scenario-simulation" variant="ghost">
-                    Simular dano
+                    Simular daño
                   </ButtonLink>
                 </div>
               </WindowPanel>
@@ -928,16 +971,18 @@ export default function Home() {
                 subtitle={
                   editingEntry && editingForm
                     ? `Actualiza ${editingEntry.character.name} sin salir del panel.`
-                    : 'Selecciona un personaje base y guarda una version propia.'
+                    : 'Selecciona un personaje base y guarda una versión propia.'
                 }
               >
                 {editingEntry && editingForm ? (
                   <UserCharacterForm
                     catalog={catalog}
                     lightCones={lightCones}
+                    selectedCharacter={editingEntry.character}
                     values={editingForm}
                     onSubmit={handleUpdateCharacter}
                     onFieldChange={handleEditingFormFieldChange}
+                    onStatFieldChange={handleEditingFormStatFieldChange}
                     submitLabel="Guardar cambios"
                     isSubmitting={isUpdatingCharacter}
                     showStatsByDefault
@@ -949,9 +994,11 @@ export default function Home() {
                   <UserCharacterForm
                     catalog={catalog}
                     lightCones={lightCones}
+                    selectedCharacter={selectedCharacter}
                     values={createForm}
                     onSubmit={handleCreateCharacter}
                     onFieldChange={handleCreateFormFieldChange}
+                    onStatFieldChange={handleCreateFormStatFieldChange}
                     submitLabel="Agregar a mi cuenta"
                     isSubmitting={isCreatingCharacter}
                     showManualToggle
@@ -974,7 +1021,7 @@ export default function Home() {
               >
                 {myCharacters.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-[var(--line-strong)] bg-[var(--surface-2)] p-6 text-sm text-[var(--ink-500)]">
-                    Aun no tienes personajes registrados.
+                    Aún no tienes personajes registrados.
                   </div>
                 ) : (
                   <div className="max-h-[72vh] space-y-3 overflow-y-auto pr-1">
@@ -1020,9 +1067,8 @@ export default function Home() {
                           </div>
                         </div>
                         <p className="mt-4 text-xs font-medium tracking-wide text-[var(--ink-700)]">
-                          LVL {entry.level} · E{entry.eidolon} · ATK {entry.atk} · CR{' '}
-                          {Math.round(entry.critRate * 100)}% · CD{' '}
-                          {Math.round(entry.critDamage * 100)}% · SPD {entry.speed}
+                          LVL {entry.level} · E{entry.eidolon} ·{' '}
+                          {formatRosterSummary(entry)}
                         </p>
                         <p className="mt-2 text-xs text-[var(--ink-500)]">
                           {entry.lightCone?.name || entry.lightConeName
@@ -1041,7 +1087,7 @@ export default function Home() {
             <section className="grid items-start gap-6 xl:grid-cols-[0.82fr_1.18fr]">
               <WindowPanel
                 title="Perfil"
-                subtitle="Datos base y accesos de navegacion."
+                subtitle="Datos base y accesos de navegación."
               >
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
@@ -1058,10 +1104,10 @@ export default function Home() {
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <ButtonLink href="/simulator" className="w-full">
-                      Abrir simulator
+                      Abrir simulador
                     </ButtonLink>
                     <Button variant="ghost" className="w-full" onClick={handleLogout}>
-                      Cerrar sesion
+                      Cerrar sesión
                     </Button>
                   </div>
                 </div>
@@ -1069,7 +1115,7 @@ export default function Home() {
 
               <WindowPanel
                 title="Seguridad"
-                subtitle="Cambia la contrasena desde un flujo corto y aislado."
+                subtitle="Cambia la contraseña desde un flujo corto y aislado."
               >
                 <form className="grid gap-3 md:grid-cols-2" onSubmit={handleChangePasswordSubmit}>
                   <div className="md:col-span-2">
@@ -1085,12 +1131,12 @@ export default function Home() {
                     <Input
                       name="newPassword"
                       type="password"
-                      placeholder="Nueva contrasena (8+)"
+                      placeholder="Nueva contraseña (8+)"
                       required
                     />
                   </div>
                   <div className="md:col-span-2 flex flex-wrap gap-3">
-                    <Button type="submit">Actualizar contrasena</Button>
+                    <Button type="submit">Actualizar contraseña</Button>
                     <Button
                       type="button"
                       variant="ghost"
