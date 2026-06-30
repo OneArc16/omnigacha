@@ -1,5 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 import { AppModule } from './app.module';
 
 const DEFAULT_DEV_ORIGINS = new Set([
@@ -35,10 +37,13 @@ function isAllowedDevOrigin(origin: string) {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const allowedOrigins = parseAllowedOrigins();
 
   app.enableShutdownHooks();
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/media',
+  });
   app.enableCors({
     origin: (
       origin: string | undefined,
@@ -49,14 +54,8 @@ async function bootstrap() {
         return;
       }
 
-      if (
-        allowedOrigins.has(origin) ||
-        process.env.NODE_ENV !== 'production'
-      ) {
-        if (
-          allowedOrigins.has(origin) ||
-          isAllowedDevOrigin(origin)
-        ) {
+      if (allowedOrigins.has(origin) || process.env.NODE_ENV !== 'production') {
+        if (allowedOrigins.has(origin) || isAllowedDevOrigin(origin)) {
           callback(null, true);
           return;
         }
@@ -75,4 +74,4 @@ async function bootstrap() {
   );
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+void bootstrap();

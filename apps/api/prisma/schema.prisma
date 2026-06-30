@@ -51,33 +51,65 @@ enum TraceStatKey {
   ELEMENTAL_DMG_BONUS
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum CatalogStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum RelicSetType {
+  ARTIFACT
+  ORNAMENT
+}
+
+enum MediaKind {
+  SPLASH_ART
+}
+
+enum StorageDriver {
+  LOCAL
+  S3
+}
+
 model User {
   id              Int              @id @default(autoincrement())
   name            String
   email           String           @unique
   passwordHash    String
+  role            UserRole         @default(USER)
+  isActive        Boolean          @default(true)
+  mustChangePassword Boolean        @default(false)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   userCharacters  UserCharacter[]
   recommendations Recommendation[]
   refreshTokens   RefreshToken[]
   simulations     Simulation[]
+  createdMediaAssets MediaAsset[]
 }
 
 model Character {
   id             Int                @id @default(autoincrement())
   name           String             @unique
+  slug           String             @unique
   element        String
   path           String
   role           String
   rarity         Int                @default(5)
   gameVersion    String             @default("3.8")
+  status         CatalogStatus      @default(PUBLISHED)
   baseHp         Int                @default(0)
   baseAtk        Int
   baseDef        Int                @default(0)
   baseCritRate   Float              @default(0.05)
   baseCritDamage Float              @default(0.5)
   baseSpeed      Int
+  splashArtAssetId Int?              @unique
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   aliases        CharacterAlias[]
@@ -86,6 +118,9 @@ model Character {
   userCharacters UserCharacter[]
   synergiesFrom  CharacterSynergy[] @relation("SynergyFrom")
   synergiesTo    CharacterSynergy[] @relation("SynergyTo")
+  splashArtAsset MediaAsset?        @relation("CharacterSplashArt", fields: [splashArtAssetId], references: [id], onDelete: SetNull)
+
+  @@index([status])
 }
 
 model CharacterAlias {
@@ -145,14 +180,19 @@ model CharacterTraceStat {
 model LightCone {
   id                Int             @id @default(autoincrement())
   name              String          @unique
+  slug             String          @unique
   path              String
   rarity            Int
   effectDescription String?
+  status           CatalogStatus   @default(PUBLISHED)
+  splashArtAssetId  Int?            @unique
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   userCharacters    UserCharacter[]
+  splashArtAsset    MediaAsset?     @relation("LightConeSplashArt", fields: [splashArtAssetId], references: [id], onDelete: SetNull)
 
   @@index([path])
+  @@index([status])
 }
 
 model CharacterSynergy {
@@ -170,6 +210,49 @@ model CharacterSynergy {
   @@unique([sourceCharacterId, targetCharacterId])
   @@index([sourceCharacterId])
   @@index([targetCharacterId])
+}
+
+model RelicSet {
+  id              Int            @id @default(autoincrement())
+  name            String         @unique
+  slug            String         @unique
+  type            RelicSetType
+  rarity          Int
+  twoPieceBonus   String
+  fourPieceBonus  String?
+  gameVersion     String?
+  status          CatalogStatus  @default(DRAFT)
+  splashArtAssetId Int?           @unique
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  splashArtAsset  MediaAsset?    @relation("RelicSetSplashArt", fields: [splashArtAssetId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+}
+
+model MediaAsset {
+  id              Int            @id @default(autoincrement())
+  kind            MediaKind
+  storageDriver   StorageDriver  @default(LOCAL)
+  storageKey      String         @unique
+  publicUrl       String
+  mimeType        String
+  sizeBytes       Int
+  width           Int?
+  height          Int?
+  checksum        String?
+  createdByUserId Int
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  characterSplashArt Character? @relation("CharacterSplashArt")
+  lightConeSplashArt LightCone? @relation("LightConeSplashArt")
+  relicSetSplashArt RelicSet? @relation("RelicSetSplashArt")
+
+  @@index([kind])
+  @@index([createdByUserId])
 }
 
 model RefreshToken {

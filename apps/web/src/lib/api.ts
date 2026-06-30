@@ -4,7 +4,7 @@ const API_BASE_URL =
 type RequestOptions = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   token?: string;
-  body?: unknown;
+  body?: unknown | FormData;
 };
 
 export async function apiRequest<T>(
@@ -12,15 +12,21 @@ export async function apiRequest<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   let response: Response;
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method: options.method ?? "GET",
       headers: {
-        "Content-Type": "application/json",
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
         ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       },
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      body: options.body
+        ? isFormData
+          ? (options.body as FormData)
+          : JSON.stringify(options.body)
+        : undefined,
       cache: "no-store",
     });
   } catch (error) {
@@ -51,6 +57,10 @@ export async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
+export function buildApiAssetUrl(path?: string | null) {
+  return path ? `${API_BASE_URL}${path}` : null;
+}
+
 export type CursorPage<T> = {
   items: T[];
   nextCursor: number | null;
@@ -64,9 +74,15 @@ export type AuthResponse = {
     id: number;
     name: string;
     email: string;
+    role: "USER" | "ADMIN";
+    isActive: boolean;
+    mustChangePassword: boolean;
     createdAt: string;
+    updatedAt: string;
   };
 };
+
+export type MeResponse = AuthResponse["user"];
 
 export type DashboardSummaryResponse = {
   totalCharacters: number;
@@ -315,17 +331,21 @@ export type SimulationDetailResponse = SimulationHistoryItem;
 export type Character = {
   id: number;
   name: string;
+  slug: string;
   element: string;
   path: string;
   role: string;
   rarity: number;
   gameVersion: string;
+  status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
   baseHp: number;
   baseAtk: number;
   baseDef: number;
   baseCritRate: number;
   baseCritDamage: number;
   baseSpeed: number;
+  splashArtAssetId?: number | null;
+  splashArtUrl?: string | null;
   aliases: CharacterAlias[];
   tags: CharacterTag[];
   tagBuckets: CharacterTagBuckets;
@@ -337,9 +357,70 @@ export type Character = {
 export type LightCone = {
   id: number;
   name: string;
+  slug: string;
   path: string;
   rarity: number;
   effectDescription?: string | null;
+  status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+  splashArtAssetId?: number | null;
+  splashArtUrl?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type RelicSet = {
+  id: number;
+  name: string;
+  slug: string;
+  type: "ARTIFACT" | "ORNAMENT";
+  rarity: number;
+  twoPieceBonus: string;
+  fourPieceBonus?: string | null;
+  gameVersion?: string | null;
+  status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+  splashArtAssetId?: number | null;
+  splashArtUrl?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type AdminDashboardSummaryResponse = {
+  totalUsers: number;
+  totalActiveAdmins: number;
+  totalCharacters: number;
+  draftCharacters: number;
+  totalLightCones: number;
+  draftLightCones: number;
+  totalRelicSets: number;
+  draftRelicSets: number;
+  totalMediaAssets: number;
+};
+
+export type AdminUserRecord = {
+  id: number;
+  name: string;
+  email: string;
+  role: "USER" | "ADMIN";
+  isActive: boolean;
+  mustChangePassword: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminMediaAsset = {
+  id: number;
+  kind: "SPLASH_ART";
+  storageDriver: "LOCAL" | "S3";
+  storageKey: string;
+  publicUrl: string;
+  mimeType: string;
+  sizeBytes: number;
+  width?: number | null;
+  height?: number | null;
+  checksum?: string | null;
+  createdByUserId: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type UserCharacter = {

@@ -1,15 +1,31 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Injectable } from '@nestjs/common';
 import { compare, hash } from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserRole } from '@prisma/client';
 import { LoginDto } from './dto/login.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import type { JwtPayload } from './types/jwt-payload.type';
+
+type AuthUserSnapshot = {
+  id: number;
+  name: string;
+  email: string;
+  role: UserRole;
+  isActive: boolean;
+  mustChangePassword: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 @Injectable()
 export class AuthService {
@@ -20,19 +36,24 @@ export class AuthService {
 
   async register(dto: RegisterDto) {
     const passwordHash = await hash(dto.password, 12);
-    let user: { id: number; name: string; email: string; createdAt: Date };
+    let user: AuthUserSnapshot;
     try {
       user = await this.prisma.user.create({
         data: {
           name: dto.name,
           email: dto.email.toLowerCase(),
           passwordHash,
+          role: UserRole.USER,
         },
         select: {
           id: true,
           name: true,
           email: true,
+          role: true,
+          isActive: true,
+          mustChangePassword: true,
           createdAt: true,
+          updatedAt: true,
         },
       });
     } catch {
@@ -40,7 +61,7 @@ export class AuthService {
     }
 
     return this.buildAuthResponse(
-      { sub: user.id, email: user.email },
+      { sub: user.id, email: user.email, role: user.role },
       user.id,
       user,
     );
@@ -55,29 +76,42 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    if (!user.isActive) {
+      throw new ForbiddenException('Account is disabled');
+    }
+
     const isValid = await compare(dto.password, user.passwordHash);
     if (!isValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
     return this.buildAuthResponse(
-      { sub: user.id, email: user.email },
+      { sub: user.id, email: user.email, role: user.role },
       user.id,
       {
         id: user.id,
         name: user.name,
         email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        mustChangePassword: user.mustChangePassword,
         createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
       },
     );
   }
 
-  async changePassword(dto: ChangePasswordDto) {
+  async changePassword(userId: number, dto: ChangePasswordDto) {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase() },
+      where: { id: userId },
     });
 
     if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isValid = await compare(dto.currentPassword, user.passwordHash);
+    if (!isValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -87,7 +121,10 @@ export class AuthService {
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: user.id },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+        },
       }),
       this.prisma.refreshToken.updateMany({
         where: { userId: user.id, revokedAt: null },
@@ -108,6 +145,9 @@ export class AuthService {
         id: true,
         name: true,
         email: true,
+        role: true,
+        isActive: true,
+        mustChangePassword: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -129,9 +169,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
+    if (!savedToken.user.isActive) {
+      throw new ForbiddenException('Account is disabled');
+    }
+
     const payload: JwtPayload = {
       sub: savedToken.user.id,
       email: savedToken.user.email,
+      role: savedToken.user.role,
     };
 
     await this.prisma.refreshToken.update({
@@ -143,7 +188,11 @@ export class AuthService {
       id: savedToken.user.id,
       name: savedToken.user.name,
       email: savedToken.user.email,
+      role: savedToken.user.role,
+      isActive: savedToken.user.isActive,
+      mustChangePassword: savedToken.user.mustChangePassword,
       createdAt: savedToken.user.createdAt,
+      updatedAt: savedToken.user.updatedAt,
     });
   }
 
@@ -160,7 +209,7 @@ export class AuthService {
   private async buildAuthResponse(
     payload: JwtPayload,
     userId: number,
-    user: Record<string, unknown>,
+    user: AuthUserSnapshot,
   ) {
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.generateRefreshTokenValue();

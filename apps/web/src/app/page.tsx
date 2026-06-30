@@ -16,6 +16,14 @@ import { SegmentedTabs } from '../components/ui/segmented-tabs';
 import { Skeleton } from '../components/ui/skeleton';
 import { WindowPanel } from '../components/ui/window-panel';
 import {
+  getAppBackdropClassName,
+  getAppShellClassName,
+  WORKSPACE_ACCOUNT_GRID_CLASSNAME,
+  WORKSPACE_HERO_GRID_CLASSNAME,
+  WORKSPACE_OVERVIEW_GRID_CLASSNAME,
+  WORKSPACE_ROSTER_GRID_CLASSNAME,
+} from '../components/layout/page-shell';
+import {
   clearAuthTokens,
   saveAuthTokens,
   useAuthTokens,
@@ -52,7 +60,7 @@ const loginSchema = z.object({
 });
 
 const changePasswordSchema = z.object({
-  email: z.string().email(),
+  currentPassword: z.string().min(1),
   newPassword: z.string().min(8),
 });
 
@@ -60,6 +68,9 @@ type Me = {
   id: number;
   name: string;
   email: string;
+  role: 'USER' | 'ADMIN';
+  isActive: boolean;
+  mustChangePassword: boolean;
 };
 
 type UserCharacterMutationPayload = {
@@ -74,7 +85,7 @@ type UserCharacterMutationPayload = {
 type RecommendationLevel =
   NonNullable<DashboardSummaryResponse['lastRecommendation']>['recommendation'];
 
-type AuthView = 'login' | 'register' | 'security';
+type AuthView = 'login' | 'register';
 type WorkspaceView = 'overview' | 'roster' | 'account';
 
 function recommendationLevelToBadgeVariant(
@@ -304,6 +315,9 @@ export default function Home() {
     [editingCharacterId, myCharacters],
   );
 
+  const resolvedWorkspaceView =
+    me?.mustChangePassword ? ('account' as WorkspaceView) : workspaceView;
+
   async function loadOwnedCharacters(token: string) {
     return apiRequest<CursorPage<UserCharacter>>('/user-characters?limit=100', {
       token,
@@ -447,6 +461,9 @@ export default function Home() {
       toast.success(
         mode === 'register' ? 'Cuenta creada con éxito.' : 'Sesión iniciada.',
       );
+      if (response.user.mustChangePassword) {
+        setWorkspaceView('account');
+      }
       form.reset();
     } catch (err) {
       toast.error(resolveErrorMessage(err, 'No fue posible autenticar'));
@@ -567,12 +584,13 @@ export default function Home() {
 
   async function handleChangePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!accessToken) return;
     setPageError('');
 
     const form = event.currentTarget;
     const formData = new FormData(form);
     const payload = {
-      email: String(formData.get('email') ?? ''),
+      currentPassword: String(formData.get('currentPassword') ?? ''),
       newPassword: String(formData.get('newPassword') ?? ''),
     };
 
@@ -582,6 +600,7 @@ export default function Home() {
         '/auth/change-password',
         {
           method: 'POST',
+          token: accessToken,
           body: parsed,
         },
       );
@@ -589,7 +608,6 @@ export default function Home() {
       toast.success(
         'Contraseña actualizada. Inicia sesión con tu nueva contraseña.',
       );
-      setAuthView('login');
       form.reset();
     } catch (err) {
       toast.error(
@@ -623,11 +641,6 @@ export default function Home() {
       label: 'Crear cuenta',
       description: 'Empieza desde cero sin pasos extra.',
     },
-    {
-      value: 'security',
-      label: 'Recuperar acceso',
-      description: 'Actualiza la contraseña por correo.',
-    },
   ] satisfies {
     value: AuthView;
     label: string;
@@ -655,22 +668,24 @@ export default function Home() {
     label: string;
     description: string;
   }[];
+  const workspaceShellClassName = getAppShellClassName('wide');
+  const workspaceBackdropClassName = getAppBackdropClassName('workspace');
 
   return (
-    <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_15%_20%,rgba(34,193,238,0.22),transparent_42%),radial-gradient(circle_at_80%_0%,rgba(245,158,11,0.18),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.4),transparent)]" />
+    <main className={workspaceShellClassName}>
+      <div className={workspaceBackdropClassName} />
 
       <WindowPanel
         title="Espacio de trabajo OmniGacha"
         subtitle="Decisiones inteligentes para tus pulls sin perderte en hojas de cálculo."
         action={<Badge variant="brand">MVP activo</Badge>}
       >
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className={WORKSPACE_HERO_GRID_CLASSNAME}>
           <div className="space-y-4">
             <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
               Centro de control
             </div>
-            <h1 className="max-w-2xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
+            <h1 className="max-w-4xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
               Planea tu roster, evalúa pulls y simula daño desde una sola mesa
               de trabajo.
             </h1>
@@ -754,28 +769,6 @@ export default function Home() {
                   </form>
                 ) : null}
 
-                {authView === 'security' ? (
-                  <form
-                    className="space-y-3"
-                    onSubmit={handleChangePasswordSubmit}
-                  >
-                    <Input
-                      name="email"
-                      type="email"
-                      placeholder="Correo de tu cuenta"
-                      required
-                    />
-                    <Input
-                      name="newPassword"
-                      type="password"
-                      placeholder="Nueva contraseña (8+)"
-                      required
-                    />
-                    <Button type="submit" variant="ghost" className="w-full">
-                      Actualizar contraseña
-                    </Button>
-                  </form>
-                ) : null}
               </div>
             </div>
           ) : (
@@ -820,13 +813,13 @@ export default function Home() {
       {!isAuthHydrated || !accessToken ? null : (
         <>
           <SegmentedTabs
-            value={workspaceView}
+            value={resolvedWorkspaceView}
             onValueChange={setWorkspaceView}
             options={workspaceOptions}
           />
 
-          {workspaceView === 'overview' ? (
-            <section className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
+          {resolvedWorkspaceView === 'overview' ? (
+            <section className={WORKSPACE_OVERVIEW_GRID_CLASSNAME}>
               <WindowPanel
                 title="Panel de control"
                 subtitle="Tu resumen rápido para decidir el siguiente movimiento."
@@ -964,8 +957,8 @@ export default function Home() {
             </section>
           ) : null}
 
-          {workspaceView === 'roster' ? (
-            <section className="grid items-start gap-6 xl:grid-cols-[0.98fr_1.02fr]">
+          {resolvedWorkspaceView === 'roster' ? (
+            <section className={WORKSPACE_ROSTER_GRID_CLASSNAME}>
               <WindowPanel
                 title={editingEntry && editingForm ? 'Editar personaje' : 'Agregar personaje'}
                 subtitle={
@@ -1083,8 +1076,8 @@ export default function Home() {
             </section>
           ) : null}
 
-          {workspaceView === 'account' ? (
-            <section className="grid items-start gap-6 xl:grid-cols-[0.82fr_1.18fr]">
+          {resolvedWorkspaceView === 'account' ? (
+            <section className={WORKSPACE_ACCOUNT_GRID_CLASSNAME}>
               <WindowPanel
                 title="Perfil"
                 subtitle="Datos base y accesos de navegación."
@@ -1117,13 +1110,22 @@ export default function Home() {
                 title="Seguridad"
                 subtitle="Cambia la contraseña desde un flujo corto y aislado."
               >
-                <form className="grid gap-3 md:grid-cols-2" onSubmit={handleChangePasswordSubmit}>
+                {me?.mustChangePassword ? (
+                  <div className="mb-4 rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    Tu cuenta fue creada con una contraseña temporal. Te
+                    recomendamos actualizarla antes de seguir trabajando.
+                  </div>
+                ) : null}
+
+                <form
+                  className="grid gap-3 md:grid-cols-2"
+                  onSubmit={handleChangePasswordSubmit}
+                >
                   <div className="md:col-span-2">
                     <Input
-                      name="email"
-                      type="email"
-                      placeholder="Correo de la cuenta"
-                      defaultValue={me?.email ?? ''}
+                      name="currentPassword"
+                      type="password"
+                      placeholder="Contraseña actual"
                       required
                     />
                   </div>

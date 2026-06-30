@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const navItems = [
   { href: "/", label: "Espacio de trabajo" },
   { href: "/simulator", label: "Simulador" },
+  { href: "/admin", label: "Admin" },
 ];
 
 export function AppHeader() {
@@ -13,7 +14,7 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[color-mix(in_oklab,var(--bg)_78%,transparent)] backdrop-blur-xl">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div className="flex w-full flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 xl:px-10 2xl:px-12">
         <div className="min-w-0">
           <Link
             href="/"
@@ -26,7 +27,7 @@ export function AppHeader() {
           </Link>
         </div>
 
-        <nav className="flex items-center gap-2" aria-label="Principal">
+        <nav className="flex flex-wrap items-center gap-2 sm:ml-auto" aria-label="Principal">
           {navItems.map((item) => {
             const isActive =
               item.href === "/"

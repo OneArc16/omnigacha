@@ -167,11 +167,7 @@ describe('character-catalog', () => {
       });
 
       expect(
-        buildCharacterStatSources(
-          baseStats,
-          overrideStats,
-          'legacy_migrated',
-        ),
+        buildCharacterStatSources(baseStats, overrideStats, 'legacy_migrated'),
       ).toEqual({
         atk: 'legacy_migrated',
         speed: 'catalog_default',

@@ -18,6 +18,14 @@ export const characterCatalogInclude = {
   traceStats: {
     orderBy: { statKey: 'asc' },
   },
+  splashArtAsset: {
+    select: {
+      id: true,
+      publicUrl: true,
+      storageKey: true,
+      kind: true,
+    },
+  },
   tags: {
     include: {
       tag: {
@@ -53,17 +61,21 @@ export function mapCharacterCatalogRow(character: CharacterCatalogRow) {
   return {
     id: character.id,
     name: character.name,
+    slug: character.slug,
     element: character.element,
     path: character.path,
     role: character.role,
     rarity: character.rarity,
     gameVersion: character.gameVersion,
+    status: character.status,
     baseHp: character.baseHp,
     baseAtk: character.baseAtk,
     baseDef: character.baseDef,
     baseCritRate: character.baseCritRate,
     baseCritDamage: character.baseCritDamage,
     baseSpeed: character.baseSpeed,
+    splashArtAssetId: character.splashArtAssetId,
+    splashArtUrl: character.splashArtAsset?.publicUrl ?? null,
     aliases: character.aliases,
     tags,
     tagBuckets,

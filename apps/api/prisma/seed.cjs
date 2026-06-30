@@ -4,6 +4,7 @@ const {
   TagCategory,
   TraceStatKey,
 } = require('@prisma/client');
+const { hashSync } = require('bcryptjs');
 const XLSX = require('xlsx');
 
 const prisma = new PrismaClient();
@@ -254,6 +255,10 @@ function normalizeText(value) {
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+function slugify(value) {
+  return normalizeText(value).replace(/\s+/g, '-');
 }
 
 function parseString(value) {
@@ -744,11 +749,13 @@ async function seedCharacterCatalog() {
     for (const record of importedCharacters) {
       const data = {
         name: record.name,
+        slug: slugify(record.name),
         element: record.element,
         path: record.path,
         role: record.role,
         rarity: record.rarity,
         gameVersion: record.gameVersion,
+        status: 'PUBLISHED',
         baseHp: record.baseHp,
         baseAtk: record.baseAtk,
         baseDef: record.baseDef,
@@ -850,11 +857,17 @@ async function seedCharacterCatalog() {
     for (const lightCone of lightCones) {
       await tx.lightCone.upsert({
         where: { name: lightCone.name },
-        create: lightCone,
+        create: {
+          ...lightCone,
+          slug: slugify(lightCone.name),
+          status: 'PUBLISHED',
+        },
         update: {
+          slug: slugify(lightCone.name),
           path: lightCone.path,
           rarity: lightCone.rarity,
           effectDescription: lightCone.effectDescription,
+          status: 'PUBLISHED',
         },
       });
     }
@@ -899,6 +912,30 @@ async function seedCharacterCatalog() {
 }
 
 async function main() {
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@omnigacha.dev';
+  const adminPassword =
+    process.env.SEED_ADMIN_PASSWORD ?? 'AdminOmniGacha_1234!';
+  const adminName = process.env.SEED_ADMIN_NAME ?? 'OmniGacha Admin';
+
+  await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {
+      name: adminName,
+      passwordHash: hashSync(adminPassword, 12),
+      role: 'ADMIN',
+      isActive: true,
+      mustChangePassword: false,
+    },
+    create: {
+      name: adminName,
+      email: adminEmail,
+      passwordHash: hashSync(adminPassword, 12),
+      role: 'ADMIN',
+      isActive: true,
+      mustChangePassword: false,
+    },
+  });
+
   const result = await seedCharacterCatalog();
   console.log(
     `Seed completado: ${result.characterCount} personajes, ${result.tagCount} tags, ` +

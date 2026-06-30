@@ -14,6 +14,14 @@ import { DamageComparisonChart } from "../../components/charts/damage-comparison
 import { ScoreBreakdownChart } from "../../components/charts/score-breakdown-chart";
 import { TeamMemberContributionChart } from "../../components/charts/team-member-contribution-chart";
 import {
+  getAppBackdropClassName,
+  getAppShellClassName,
+  SIMULATOR_HERO_GRID_CLASSNAME,
+  SIMULATOR_HISTORY_GRID_CLASSNAME,
+  SIMULATOR_RECOMMEND_GRID_CLASSNAME,
+  SIMULATOR_SCENARIO_GRID_CLASSNAME,
+} from "../../components/layout/page-shell";
+import {
   clearAuthTokens,
   useAuthTokens,
   useHydratedValue,
@@ -639,18 +647,22 @@ export default function SimulatorPage() {
       clearAuthTokens();
     }
   }
+  const simulatorShellClassName = getAppShellClassName("wide");
+  const compactShellClassName = getAppShellClassName("compact");
+  const simulatorBackdropClassName = getAppBackdropClassName("simulator");
+  const compactBackdropClassName = getAppBackdropClassName("compact");
 
   if (!isAuthHydrated) {
     return (
-      <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_18%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_82%_2%,rgba(56,189,248,0.14),transparent_34%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
+      <main className={simulatorShellClassName}>
+        <div className={simulatorBackdropClassName} />
 
         <WindowPanel
           title="Laboratorio de simulación"
           subtitle="Preparando el entorno de simulación."
           action={<Badge variant="neutral">Inicializando</Badge>}
         >
-          <div className="grid gap-4 lg:grid-cols-[0.94fr_1.06fr]">
+          <div className={SIMULATOR_HERO_GRID_CLASSNAME}>
             <div className="space-y-3">
               <Skeleton className="h-6 w-32 rounded-full" />
               <Skeleton className="h-14 w-full rounded-3xl" />
@@ -669,8 +681,8 @@ export default function SimulatorPage() {
 
   if (!accessToken) {
     return (
-      <main className="relative mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[24rem] bg-[radial-gradient(circle_at_20%_10%,rgba(34,193,238,0.18),transparent_42%),linear-gradient(180deg,rgba(6,10,21,0.38),transparent)]" />
+      <main className={compactShellClassName}>
+        <div className={compactBackdropClassName} />
 
         <WindowPanel
           title="Laboratorio de simulación"
@@ -696,15 +708,15 @@ export default function SimulatorPage() {
 
   if (isBootstrapping) {
     return (
-      <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_18%_16%,rgba(34,193,238,0.2),transparent_42%),radial-gradient(circle_at_76%_2%,rgba(14,165,233,0.12),transparent_32%),linear-gradient(180deg,rgba(6,10,21,0.42),transparent)]" />
+      <main className={simulatorShellClassName}>
+        <div className={simulatorBackdropClassName} />
 
         <WindowPanel
           title="Laboratorio de simulación"
           subtitle="Cargando catálogo, roster, recomendaciones e historial."
           action={<Badge variant="brand">Sincronizando</Badge>}
         >
-          <div className="grid gap-6 xl:grid-cols-[0.86fr_1.14fr]">
+          <div className={SIMULATOR_HERO_GRID_CLASSNAME}>
             <div className="space-y-3">
               <Skeleton className="h-9 w-40 rounded-full" />
               <Skeleton className="h-12 w-full rounded-2xl" />
@@ -722,8 +734,8 @@ export default function SimulatorPage() {
   }
 
   return (
-    <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 pb-10 pt-6 sm:px-6">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[30rem] bg-[radial-gradient(circle_at_14%_18%,rgba(34,193,238,0.24),transparent_42%),radial-gradient(circle_at_84%_2%,rgba(14,165,233,0.15),transparent_34%),radial-gradient(circle_at_50%_0%,rgba(2,132,199,0.08),transparent_38%),linear-gradient(180deg,rgba(6,10,21,0.46),transparent)]" />
+    <main className={simulatorShellClassName}>
+      <div className={simulatorBackdropClassName} />
 
       <WindowPanel
         title="Laboratorio de simulación"
@@ -739,16 +751,16 @@ export default function SimulatorPage() {
           </div>
         }
       >
-        <div className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+        <div className={SIMULATOR_HERO_GRID_CLASSNAME}>
           <div className="space-y-4">
             <div className="inline-flex items-center rounded-full border border-[var(--line)] bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--ink-500)]">
               Panel de análisis
             </div>
-            <h1 className="max-w-3xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
+            <h1 className="max-w-4xl text-4xl font-black tracking-tight text-[var(--ink-900)] sm:text-5xl">
               Recomendaciones y escenarios en ventanas activas, no en una
               página interminable.
             </h1>
-            <p className="max-w-2xl text-base leading-7 text-[var(--ink-600)]">
+            <p className="max-w-3xl text-base leading-7 text-[var(--ink-600)]">
               Compactamos el simulador para que puedas fijar objetivo, ajustar
               stats, comparar resultados y revisar historiales sin perder el
               contexto cada vez que cambias de tarea.
@@ -804,7 +816,7 @@ export default function SimulatorPage() {
       {activeView === "recommend" ? (
         <section
           id="recommend-target"
-          className="grid items-start gap-6 xl:grid-cols-[0.82fr_1.18fr]"
+          className={SIMULATOR_RECOMMEND_GRID_CLASSNAME}
         >
           <div className="space-y-6">
             <WindowPanel
@@ -1207,7 +1219,7 @@ export default function SimulatorPage() {
       {activeView === "scenario" ? (
         <section
           id="scenario-simulation"
-          className="grid items-start gap-6 xl:grid-cols-[0.84fr_1.16fr]"
+          className={SIMULATOR_SCENARIO_GRID_CLASSNAME}
         >
           <WindowPanel
             title="Escenario controlado"
@@ -1534,7 +1546,10 @@ export default function SimulatorPage() {
       ) : null}
 
       {activeView === "history" ? (
-        <section id="history" className="grid items-start gap-6 xl:grid-cols-2">
+        <section
+          id="history"
+          className={SIMULATOR_HISTORY_GRID_CLASSNAME}
+        >
           <WindowPanel
             title="Historial de recomendaciones"
             subtitle="Resultado reciente de decisiones de pull guardadas en tu cuenta."
