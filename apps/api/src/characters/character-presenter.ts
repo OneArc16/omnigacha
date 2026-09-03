@@ -26,6 +26,14 @@ export const characterCatalogInclude = {
       kind: true,
     },
   },
+  portraitAsset: {
+    select: {
+      id: true,
+      publicUrl: true,
+      storageKey: true,
+      kind: true,
+    },
+  },
   tags: {
     include: {
       tag: {
@@ -76,6 +84,8 @@ export function mapCharacterCatalogRow(character: CharacterCatalogRow) {
     baseSpeed: character.baseSpeed,
     splashArtAssetId: character.splashArtAssetId,
     splashArtUrl: character.splashArtAsset?.publicUrl ?? null,
+    portraitAssetId: character.portraitAssetId,
+    portraitUrl: character.portraitAsset?.publicUrl ?? null,
     aliases: character.aliases,
     tags,
     tagBuckets,

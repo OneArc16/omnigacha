@@ -2,15 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCurrentUser } from "../../lib/use-current-user";
 
-const navItems = [
+const BASE_NAV_ITEMS = [
   { href: "/", label: "Espacio de trabajo" },
   { href: "/simulator", label: "Simulador" },
-  { href: "/admin", label: "Admin" },
 ];
+const ADMIN_NAV_ITEM = { href: "/admin", label: "Admin" };
 
 export function AppHeader() {
   const pathname = usePathname();
+  const currentUser = useCurrentUser();
+  const navItems =
+    currentUser.status === "ready" && currentUser.profile.role === "ADMIN"
+      ? [...BASE_NAV_ITEMS, ADMIN_NAV_ITEM]
+      : BASE_NAV_ITEMS;
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[color-mix(in_oklab,var(--bg)_78%,transparent)] backdrop-blur-xl">

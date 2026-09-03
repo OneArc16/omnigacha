@@ -30,6 +30,7 @@ type CharacterWriteDefaults = {
   baseCritDamage: number;
   baseSpeed: number;
   splashArtAssetId: number | null;
+  portraitAssetId: number | null;
 };
 
 function buildCharacterWriteData(
@@ -55,6 +56,10 @@ function buildCharacterWriteData(
       dto.splashArtAssetId === undefined
         ? current.splashArtAssetId
         : dto.splashArtAssetId,
+    portraitAssetId:
+      dto.portraitAssetId === undefined
+        ? current.portraitAssetId
+        : dto.portraitAssetId,
   };
 }
 
@@ -82,6 +87,7 @@ export class CharactersService {
           baseCritDamage: dto.baseCritDamage,
           baseSpeed: dto.baseSpeed,
           splashArtAssetId: dto.splashArtAssetId ?? null,
+          portraitAssetId: dto.portraitAssetId ?? null,
         }),
         include: characterCatalogInclude,
       });
@@ -146,6 +152,7 @@ export class CharactersService {
           baseCritDamage: true,
           baseSpeed: true,
           splashArtAssetId: true,
+          portraitAssetId: true,
         },
       });
 
@@ -176,6 +183,7 @@ export class CharactersService {
           baseCritDamage: current.baseCritDamage,
           baseSpeed: current.baseSpeed,
           splashArtAssetId: current.splashArtAssetId,
+          portraitAssetId: current.portraitAssetId,
         }),
         include: characterCatalogInclude,
       });

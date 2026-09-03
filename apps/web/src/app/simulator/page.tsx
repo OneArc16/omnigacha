@@ -6,6 +6,8 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonLink } from "../../components/ui/button-link";
 import { Combobox } from "../../components/ui/combobox";
+import { CharacterPortrait } from "../../components/characters/character-portrait";
+import { CharacterVisualPicker } from "../../components/characters/character-visual-picker";
 import { Input } from "../../components/ui/input";
 import { SegmentedTabs } from "../../components/ui/segmented-tabs";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -380,26 +382,6 @@ export default function SimulatorPage() {
         .map((value) => Number(value))
         .filter((value) => Number.isFinite(value)),
     [teammateSlots],
-  );
-
-  const targetCharacterOptions = useMemo(
-    () =>
-      catalog.map((character) => ({
-        value: String(character.id),
-        label: buildCharacterOptionLabel(character),
-        searchText: buildCharacterSearchText(character),
-      })),
-    [catalog],
-  );
-
-  const scenarioCharacterOptions = useMemo(
-    () =>
-      owned.map((entry) => ({
-        value: String(entry.character.id),
-        label: buildCharacterOptionLabel(entry.character),
-        searchText: buildCharacterSearchText(entry.character),
-      })),
-    [owned],
   );
 
   async function loadRecommendationHistory(
@@ -831,47 +813,43 @@ export default function SimulatorPage() {
               }
             >
               <form className="space-y-4" onSubmit={handleRecommend}>
-                <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-                  <Combobox
-                    className="w-full"
-                    options={targetCharacterOptions}
-                    value={targetCharacterId ? String(targetCharacterId) : ""}
-                    onValueChange={(nextValue) => {
-                      const nextTargetId = nextValue ? Number(nextValue) : null;
-                      setTargetCharacterId(nextTargetId);
-                      applyRecommendationTargetDefaults(nextTargetId);
-                    }}
-                    placeholder="Selecciona un personaje"
-                    searchPlaceholder="Busca por nombre o alias"
-                    emptyText="No hay personajes que coincidan."
-                  />
-                  <Button
-                    type="submit"
-                    disabled={!targetCharacterId || catalog.length === 0}
-                  >
-                    Simular recomendación
-                  </Button>
-                </div>
+                <CharacterVisualPicker
+                  characters={catalog}
+                  value={targetCharacterId}
+                  onValueChange={(nextTargetId) => {
+                    setTargetCharacterId(nextTargetId);
+                    applyRecommendationTargetDefaults(nextTargetId);
+                  }}
+                />
+                <Button
+                  type="submit"
+                  disabled={!targetCharacterId || catalog.length === 0}
+                >
+                  Simular recomendación
+                </Button>
 
                 {targetCharacter ? (
-                  <div className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="brand">{targetCharacter.element}</Badge>
-                      <Badge variant="outline">{targetCharacter.path}</Badge>
-                      <Badge variant="neutral">{targetCharacter.role}</Badge>
-                      {targetCharacter.tagBuckets.archetypes.map((archetype) => (
-                        <Badge key={archetype} variant="success">
-                          {archetype}
-                        </Badge>
-                      ))}
+                  <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4">
+                    <CharacterPortrait character={targetCharacter} size="md" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="brand">{targetCharacter.element}</Badge>
+                        <Badge variant="outline">{targetCharacter.path}</Badge>
+                        <Badge variant="neutral">{targetCharacter.role}</Badge>
+                        {targetCharacter.tagBuckets.archetypes.map((archetype) => (
+                          <Badge key={archetype} variant="success">
+                            {archetype}
+                          </Badge>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-sm text-[var(--ink-600)]">
+                        Base actual del catálogo:{" "}
+                        {formatStatSummary(
+                          recommendationStatKeys,
+                          targetCharacter.defaultStats,
+                        ).join(" · ")}
+                      </p>
                     </div>
-                    <p className="mt-3 text-sm text-[var(--ink-600)]">
-                      Base actual del catálogo:{" "}
-                      {formatStatSummary(
-                        recommendationStatKeys,
-                        targetCharacter.defaultStats,
-                      ).join(" · ")}
-                    </p>
                   </div>
                 ) : null}
 
@@ -955,17 +933,20 @@ export default function SimulatorPage() {
                       className="rounded-2xl border border-[var(--line)] bg-[var(--surface-2)] p-4"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[var(--ink-900)]">
-                            {entry.character.name}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            <Badge variant="brand">
-                              {entry.character.element}
-                            </Badge>
-                            <Badge variant="outline">
-                              {entry.character.path}
-                            </Badge>
+                        <div className="flex gap-3">
+                          <CharacterPortrait character={entry.character} size="sm" />
+                          <div>
+                            <p className="text-sm font-semibold text-[var(--ink-900)]">
+                              {entry.character.name}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <Badge variant="brand">
+                                {entry.character.element}
+                              </Badge>
+                              <Badge variant="outline">
+                                {entry.character.path}
+                              </Badge>
+                            </div>
                           </div>
                         </div>
                         {targetCharacterId === entry.character.id ? (
@@ -1249,14 +1230,10 @@ export default function SimulatorPage() {
                     <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
                       Personaje a simular
                     </p>
-                    <Combobox
-                      className="w-full"
-                      options={scenarioCharacterOptions}
-                      value={
-                        scenarioCharacterId ? String(scenarioCharacterId) : ""
-                      }
-                      onValueChange={(nextValue) => {
-                        const selectedId = nextValue ? Number(nextValue) : null;
+                    <CharacterVisualPicker
+                      characters={owned.map((entry) => entry.character)}
+                      value={scenarioCharacterId}
+                      onValueChange={(selectedId) => {
                         setScenarioCharacterId(selectedId);
                         setTeammateSlots((current) =>
                           current.map((slotValue) =>
@@ -1281,7 +1258,6 @@ export default function SimulatorPage() {
 
                         applyScenarioCharacterDefaults(selectedEntry);
                       }}
-                      placeholder="Selecciona un personaje"
                       searchPlaceholder="Busca en tu roster por nombre o alias"
                       emptyText="No hay personajes de tu roster que coincidan."
                     />

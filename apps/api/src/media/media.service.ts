@@ -6,7 +6,10 @@ import { extname, join, normalize } from 'path';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
-const SPLASH_ART_ROOT = 'splash-art';
+const MEDIA_ROOT_BY_KIND: Record<MediaKind, string> = {
+  [MediaKind.SPLASH_ART]: 'splash-art',
+  [MediaKind.CHARACTER_PORTRAIT]: 'portrait',
+};
 const ALLOWED_EXTENSIONS = new Map([
   ['image/png', '.png'],
   ['image/jpeg', '.jpg'],
@@ -35,23 +38,54 @@ export class MediaService {
     namespace: 'characters' | 'light-cones' | 'relic-sets',
     slug: string,
   ) {
+    return this.saveImageAsset(
+      file,
+      createdByUserId,
+      MediaKind.SPLASH_ART,
+      namespace,
+      slug,
+    );
+  }
+
+  async saveCharacterPortrait(
+    file: Express.Multer.File,
+    createdByUserId: number,
+    slug: string,
+  ) {
+    return this.saveImageAsset(
+      file,
+      createdByUserId,
+      MediaKind.CHARACTER_PORTRAIT,
+      'characters',
+      slug,
+    );
+  }
+
+  private async saveImageAsset(
+    file: Express.Multer.File,
+    createdByUserId: number,
+    kind: MediaKind,
+    namespace: 'characters' | 'light-cones' | 'relic-sets',
+    slug: string,
+  ) {
     this.assertImage(file);
 
+    const root = MEDIA_ROOT_BY_KIND[kind];
     const extension = resolveExtension(file);
     const storageKey = normalize(
-      `${SPLASH_ART_ROOT}/${namespace}/${slug}-${randomUUID()}${extension}`,
+      `${root}/${namespace}/${slug}-${randomUUID()}${extension}`,
     ).replace(/\\/g, '/');
     const uploadRoot = this.getUploadRoot();
     const absolutePath = join(uploadRoot, storageKey);
 
-    await mkdir(join(uploadRoot, SPLASH_ART_ROOT, namespace), {
+    await mkdir(join(uploadRoot, root, namespace), {
       recursive: true,
     });
     await writeFile(absolutePath, file.buffer);
 
     return this.prisma.mediaAsset.create({
       data: {
-        kind: MediaKind.SPLASH_ART,
+        kind,
         storageDriver: StorageDriver.LOCAL,
         storageKey,
         publicUrl: this.buildPublicUrl(storageKey),

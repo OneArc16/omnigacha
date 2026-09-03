@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { CharacterPortrait } from '../components/characters/character-portrait';
 import {
   UserCharacterForm,
   type UserCharacterFormValues,
@@ -1028,14 +1029,17 @@ export default function Home() {
                         }`}
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="space-y-2">
-                            <p className="text-base font-semibold text-[var(--ink-900)]">
-                              {entry.character.name}
-                            </p>
-                            <div className="flex flex-wrap gap-1.5">
-                              <Badge variant="brand">{entry.character.element}</Badge>
-                              <Badge variant="outline">{entry.character.path}</Badge>
-                              <Badge variant="neutral">{entry.character.role}</Badge>
+                          <div className="flex gap-3">
+                            <CharacterPortrait character={entry.character} size="sm" />
+                            <div className="space-y-2">
+                              <p className="text-base font-semibold text-[var(--ink-900)]">
+                                {entry.character.name}
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                <Badge variant="brand">{entry.character.element}</Badge>
+                                <Badge variant="outline">{entry.character.path}</Badge>
+                                <Badge variant="neutral">{entry.character.role}</Badge>
+                              </div>
                             </div>
                           </div>
                           <div className="flex gap-2">

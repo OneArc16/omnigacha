@@ -72,4 +72,9 @@ export class CreateCharacterDto {
   @IsInt()
   @Min(1)
   splashArtAssetId?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  portraitAssetId?: number | null;
 }

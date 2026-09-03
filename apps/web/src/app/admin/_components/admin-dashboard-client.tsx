@@ -506,29 +506,37 @@ function CatalogThumb({ src, alt, placeholder }: CatalogThumbProps) {
   );
 }
 
-type SplashArtCardProps = {
+type MediaSlotCardProps = {
   title: string;
   emptyMessage: string;
   item?: {
     id: number;
     name: string;
     slug: string;
-    splashArtUrl?: string | null;
-    splashArtAssetId?: number | null;
   } | null;
+  imageUrl?: string | null;
+  assetId?: number | null;
+  uploadButtonLabel: string;
+  previewAspectClassName?: string;
+  hint?: string;
   onUpload: (formData: FormData) => Promise<void>;
   onRemove: () => Promise<void>;
   isUploading: boolean;
 };
 
-function SplashArtCard({
+function MediaSlotCard({
   title,
   emptyMessage,
   item,
+  imageUrl,
+  assetId,
+  uploadButtonLabel,
+  previewAspectClassName = 'h-60',
+  hint,
   onUpload,
   onRemove,
   isUploading,
-}: SplashArtCardProps) {
+}: MediaSlotCardProps) {
   return (
     <section className="rounded-3xl border border-[var(--line)] bg-[var(--surface-2)]/70 p-4">
       <div className="flex items-start justify-between gap-4">
@@ -542,21 +550,26 @@ function SplashArtCard({
           <p className="mt-1 text-sm text-[var(--ink-600)]">
             {item ? item.slug : emptyMessage}
           </p>
+          {hint ? (
+            <p className="mt-1 text-xs text-[var(--ink-500)]">{hint}</p>
+          ) : null}
         </div>
         {item ? (
-          <Badge variant={item.splashArtAssetId ? 'success' : 'warning'}>
-            {item.splashArtAssetId ? 'Con imagen' : 'Sin imagen'}
+          <Badge variant={assetId ? 'success' : 'warning'}>
+            {assetId ? 'Con imagen' : 'Sin imagen'}
           </Badge>
         ) : null}
       </div>
 
       {item ? (
         <div className="mt-4 space-y-4">
-      <div className="overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--surface)]">
-        {item.splashArtUrl ? (
-          <div className="relative h-60 w-full">
+      <div
+        className={`overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--surface)] ${previewAspectClassName}`}
+      >
+        {imageUrl ? (
+          <div className="relative h-full w-full">
             <Image
-              src={buildApiAssetUrl(item.splashArtUrl) ?? ''}
+              src={buildApiAssetUrl(imageUrl) ?? ''}
               alt={item.name}
               fill
               sizes="(max-width: 640px) 100vw, 480px"
@@ -565,8 +578,8 @@ function SplashArtCard({
             />
           </div>
         ) : (
-          <div className="flex h-60 items-center justify-center px-4 text-center text-sm text-[var(--ink-500)]">
-            Todavia no hay splash art asociado.
+          <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--ink-500)]">
+            Todavia no hay imagen asociada.
           </div>
         )}
           </div>
@@ -575,11 +588,12 @@ function SplashArtCard({
             className="space-y-3"
             onSubmit={async (event) => {
               event.preventDefault();
-              const formData = new FormData(event.currentTarget);
+              const form = event.currentTarget;
+              const formData = new FormData(form);
 
               try {
                 await onUpload(formData);
-                event.currentTarget.reset();
+                form.reset();
               } catch (error) {
                 toast.error(
                   error instanceof Error
@@ -604,7 +618,7 @@ function SplashArtCard({
 
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={isUploading}>
-                {isUploading ? 'Subiendo...' : 'Subir splash art'}
+                {isUploading ? 'Subiendo...' : uploadButtonLabel}
               </Button>
               <Button
                 type="button"
@@ -612,7 +626,7 @@ function SplashArtCard({
                 onClick={() => {
                   void onRemove();
                 }}
-                disabled={isUploading || !item.splashArtAssetId}
+                disabled={isUploading || !assetId}
               >
                 Quitar imagen
               </Button>
@@ -690,6 +704,7 @@ export function AdminDashboardClient() {
   const [isSavingLightCone, setIsSavingLightCone] = useState(false);
   const [isSavingRelicSet, setIsSavingRelicSet] = useState(false);
   const [isUploadingSplashArt, setIsUploadingSplashArt] = useState(false);
+  const [isUploadingPortrait, setIsUploadingPortrait] = useState(false);
 
   const resetWorkspace = useCallback(() => {
     setMe(null);
@@ -1268,6 +1283,66 @@ export function AdminDashboardClient() {
       );
     } finally {
       setIsUploadingSplashArt(false);
+    }
+  }
+
+  async function handleCharacterPortraitUpload(formData: FormData) {
+    if (!accessToken || !selectedCharacter) return;
+
+    const file = formData.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      throw new Error('Selecciona una imagen válida.');
+    }
+
+    setIsUploadingPortrait(true);
+
+    try {
+      const payload = new FormData();
+      payload.set('file', file);
+
+      const response = await apiRequest<Character>(
+        `/admin/characters/${selectedCharacter.id}/portrait`,
+        {
+          method: 'POST',
+          token: accessToken,
+          body: payload,
+        },
+      );
+
+      setCharacters((current) => upsertById(current, response));
+      setSelectedCharacterId(response.id);
+      toast.success('Retrato de personaje actualizado.');
+    } finally {
+      setIsUploadingPortrait(false);
+    }
+  }
+
+  async function handleCharacterPortraitRemove() {
+    if (!accessToken || !selectedCharacter) return;
+    if (!selectedCharacter.portraitAssetId) return;
+
+    setIsUploadingPortrait(true);
+
+    try {
+      const response = await apiRequest<Character>(
+        `/admin/characters/${selectedCharacter.id}/portrait`,
+        {
+          method: 'DELETE',
+          token: accessToken,
+        },
+      );
+
+      setCharacters((current) => upsertById(current, response));
+      setSelectedCharacterId(response.id);
+      toast.success('Retrato eliminado.');
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'No fue posible eliminar la imagen.',
+      );
+    } finally {
+      setIsUploadingPortrait(false);
     }
   }
 
@@ -2343,15 +2418,34 @@ export function AdminDashboardClient() {
               </div>
             </form>
 
-            <SplashArtCard
-              key={`character-${selectedCharacter?.id ?? 'empty'}-${selectedCharacter?.splashArtAssetId ?? 'none'}`}
-              title="Splash art de personaje"
-              emptyMessage="Selecciona un personaje para subir o quitar su splash art."
-              item={selectedCharacter}
-              onUpload={handleCharacterSplashUpload}
-              onRemove={handleCharacterSplashRemove}
-              isUploading={isUploadingSplashArt}
-            />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <MediaSlotCard
+                key={`character-splash-${selectedCharacter?.id ?? 'empty'}-${selectedCharacter?.splashArtAssetId ?? 'none'}`}
+                title="Splash art de personaje"
+                emptyMessage="Selecciona un personaje para subir o quitar su splash art."
+                item={selectedCharacter}
+                imageUrl={selectedCharacter?.splashArtUrl}
+                assetId={selectedCharacter?.splashArtAssetId}
+                uploadButtonLabel="Subir splash art"
+                onUpload={handleCharacterSplashUpload}
+                onRemove={handleCharacterSplashRemove}
+                isUploading={isUploadingSplashArt}
+              />
+              <MediaSlotCard
+                key={`character-portrait-${selectedCharacter?.id ?? 'empty'}-${selectedCharacter?.portraitAssetId ?? 'none'}`}
+                title="Retrato de catálogo"
+                emptyMessage="Selecciona un personaje para subir o quitar su retrato."
+                item={selectedCharacter}
+                imageUrl={selectedCharacter?.portraitUrl}
+                assetId={selectedCharacter?.portraitAssetId}
+                uploadButtonLabel="Subir retrato"
+                previewAspectClassName="aspect-[3/4] max-w-[220px]"
+                hint="Se usa en roster, recomendación, simulación y catálogo visual."
+                onUpload={handleCharacterPortraitUpload}
+                onRemove={handleCharacterPortraitRemove}
+                isUploading={isUploadingPortrait}
+              />
+            </div>
           </div>
         </div>
       </WindowPanel>
@@ -2546,11 +2640,14 @@ export function AdminDashboardClient() {
               </div>
             </form>
 
-            <SplashArtCard
+            <MediaSlotCard
               key={`light-cone-${selectedLightCone?.id ?? 'empty'}-${selectedLightCone?.splashArtAssetId ?? 'none'}`}
               title="Splash art de cono"
               emptyMessage="Selecciona un cono de luz para gestionar su imagen."
               item={selectedLightCone}
+              imageUrl={selectedLightCone?.splashArtUrl}
+              assetId={selectedLightCone?.splashArtAssetId}
+              uploadButtonLabel="Subir splash art"
               onUpload={handleLightConeSplashUpload}
               onRemove={handleLightConeSplashRemove}
               isUploading={isUploadingSplashArt}
@@ -2808,7 +2905,7 @@ export function AdminDashboardClient() {
               </div>
             </form>
 
-            <SplashArtCard
+            <MediaSlotCard
               key={`relic-set-${type}-${selectedRecord?.id ?? 'empty'}-${selectedRecord?.splashArtAssetId ?? 'none'}`}
               title={isArtifact ? 'Splash art de artefacto' : 'Splash art de ornamento'}
               emptyMessage={
@@ -2817,6 +2914,9 @@ export function AdminDashboardClient() {
                   : 'Selecciona un ornamento para gestionar su imagen.'
               }
               item={selectedRecord}
+              imageUrl={selectedRecord?.splashArtUrl}
+              assetId={selectedRecord?.splashArtAssetId}
+              uploadButtonLabel="Subir splash art"
               onUpload={async (formData) => {
                 await handleRelicSetSplashUpload(formData, type);
               }}

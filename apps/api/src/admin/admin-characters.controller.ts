@@ -116,4 +116,57 @@ export class AdminCharactersController {
     await this.mediaService.deleteAsset(previousAssetId);
     return updated;
   }
+
+  @Post(':id/portrait')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  async uploadPortrait(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const character = await this.charactersService.findOneAdmin(id);
+    const previousAssetId = character.portraitAssetId;
+    const asset = await this.mediaService.saveCharacterPortrait(
+      file,
+      user.sub,
+      character.slug,
+    );
+
+    try {
+      const updated = await this.charactersService.update(id, {
+        portraitAssetId: asset.id,
+      });
+
+      if (previousAssetId && previousAssetId !== asset.id) {
+        await this.mediaService.deleteAsset(previousAssetId);
+      }
+
+      return updated;
+    } catch (error) {
+      await this.mediaService.deleteAsset(asset.id);
+      throw error;
+    }
+  }
+
+  @Delete(':id/portrait')
+  async removePortrait(@Param('id', ParseIntPipe) id: number) {
+    const character = await this.charactersService.findOneAdmin(id);
+
+    if (!character.portraitAssetId) {
+      return character;
+    }
+
+    const previousAssetId = character.portraitAssetId;
+    const updated = await this.charactersService.update(id, {
+      portraitAssetId: null,
+    });
+
+    await this.mediaService.deleteAsset(previousAssetId);
+    return updated;
+  }
 }

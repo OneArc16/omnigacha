@@ -9,8 +9,9 @@ import {
   getVisibleCharacterStatKeys,
 } from '../../lib/character-stats';
 import { Button } from '../ui/button';
-import { Combobox } from '../ui/combobox';
 import { Input } from '../ui/input';
+import { CharacterSummaryCard } from './character-summary-card';
+import { CharacterVisualPicker } from './character-visual-picker';
 
 export type UserCharacterFormValues = {
   characterId: string;
@@ -98,31 +99,21 @@ export function UserCharacterForm({
     () => getVisibleCharacterStatKeys(selectedCharacter),
     [selectedCharacter],
   );
-  const characterOptions = useMemo(
-    () =>
-      catalog.map((character) => ({
-        value: String(character.id),
-        label: `${character.name} - ${character.element} / ${character.path}`,
-        searchText: [character.name, ...character.aliases.map((alias) => alias.alias)].join(
-          ' ',
-        ),
-      })),
-    [catalog],
-  );
-
   return (
     <form className="space-y-4" onSubmit={onSubmit}>
-      <div className="flex flex-col gap-3 md:flex-row">
-        <Combobox
-          className="w-full md:min-w-96"
-          options={characterOptions}
-          value={values.characterId}
-          onValueChange={(nextValue) => onFieldChange('characterId', nextValue)}
-          disabled={disableCharacterSelect}
-          placeholder="Selecciona un personaje"
-          searchPlaceholder="Busca por nombre o alias"
-          emptyText="No hay personajes que coincidan."
-        />
+      <div className="space-y-3">
+        {disableCharacterSelect && selectedCharacter ? (
+          <CharacterSummaryCard character={selectedCharacter} />
+        ) : (
+          <CharacterVisualPicker
+            characters={catalog}
+            value={values.characterId ? Number(values.characterId) : null}
+            onValueChange={(nextId) =>
+              onFieldChange('characterId', nextId ? String(nextId) : '')
+            }
+            disabled={disableCharacterSelect}
+          />
+        )}
 
         <div className="flex gap-3">
           <Button type="submit" disabled={isSubmitting || !values.characterId}>

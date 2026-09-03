@@ -69,6 +69,7 @@ enum RelicSetType {
 
 enum MediaKind {
   SPLASH_ART
+  CHARACTER_PORTRAIT
 }
 
 enum StorageDriver {
@@ -110,6 +111,7 @@ model Character {
   baseCritDamage Float              @default(0.5)
   baseSpeed      Int
   splashArtAssetId Int?              @unique
+  portraitAssetId Int?               @unique
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   aliases        CharacterAlias[]
@@ -119,6 +121,7 @@ model Character {
   synergiesFrom  CharacterSynergy[] @relation("SynergyFrom")
   synergiesTo    CharacterSynergy[] @relation("SynergyTo")
   splashArtAsset MediaAsset?        @relation("CharacterSplashArt", fields: [splashArtAssetId], references: [id], onDelete: SetNull)
+  portraitAsset  MediaAsset?        @relation("CharacterPortrait", fields: [portraitAssetId], references: [id], onDelete: SetNull)
 
   @@index([status])
 }
@@ -248,6 +251,7 @@ model MediaAsset {
 
   createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   characterSplashArt Character? @relation("CharacterSplashArt")
+  characterPortrait Character? @relation("CharacterPortrait")
   lightConeSplashArt LightCone? @relation("LightConeSplashArt")
   relicSetSplashArt RelicSet? @relation("RelicSetSplashArt")
 

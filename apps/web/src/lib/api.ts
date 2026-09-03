@@ -346,6 +346,8 @@ export type Character = {
   baseSpeed: number;
   splashArtAssetId?: number | null;
   splashArtUrl?: string | null;
+  portraitAssetId?: number | null;
+  portraitUrl?: string | null;
   aliases: CharacterAlias[];
   tags: CharacterTag[];
   tagBuckets: CharacterTagBuckets;
