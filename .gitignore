@@ -27,3 +27,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# local media storage (LOCAL StorageDriver — see docs/admin-module-implementation-context.md §12)
+apps/api/uploads/

@@ -365,10 +365,12 @@ describe('Phase 18 MVP flow (e2e)', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
         characterId: ownedCharacterAId,
-        atkDelta: 250,
-        critRateDelta: 8,
-        critDamageDelta: 20,
-        speedDelta: 6,
+        stats: {
+          atk: 3500,
+          crit_rate: 0.63,
+          crit_damage: 1.75,
+          speed: 148,
+        },
         teammateCharacterIds: [ownedCharacterBId],
       })
       .expect(201);

@@ -42,20 +42,36 @@ Queda fuera de esta fase:
 - ORM: Prisma.
 - Autenticación: JWT + refresh tokens.
 
-### Hallazgos importantes
+### Hallazgos importantes (actualizado 2026-10-11)
 
-- Existe registro público de usuario mediante `POST /auth/register`.
-- Existe un CRUD de usuarios ya expuesto en backend.
-- Existe CRUD básico de personajes y conos de luz.
-- No existen todavía módulos de artefactos ni ornamentos.
-- No existe modelo de roles en la tabla `User`.
-- No existe infraestructura de media para splash art.
+> Nota: esta sección reflejaba el estado del proyecto al redactar el documento original. Desde entonces el backend avanzó significativamente; se deja la versión original tachada como referencia histórica y se documenta el estado real verificado.
+
+Estado real verificado en el repositorio:
+
+- El modelo `User` en `apps/api/prisma/schema.prisma` **ya incluye** `role: UserRole`, `isActive: Boolean` y `mustChangePassword: Boolean`, con enum `UserRole` (`USER`, `ADMIN`).
+- **Ya existe** la tabla `MediaAsset` con todos los campos sugeridos en la sección 7.2 (kind, storageDriver, storageKey, publicUrl, mimeType, sizeBytes, width, height, checksum, createdByUserId, createdAt, updatedAt), más enums `MediaKind` y `StorageDriver`.
+- **Ya existe** `RelicSet` unificado con enum `RelicSetType` (`ARTIFACT`, `ORNAMENT`) — no se crearon entidades separadas de artefactos y ornamentos, siguiendo la recomendación de la sección 8.
+- `Character` y `LightCone` **ya incluyen** `slug`, `status: CatalogStatus` y `splashArtAssetId`.
+- **Ya existe** el módulo `admin/` (`apps/api/src/admin/`) con `AdminUsersController`, `AdminCharactersController`, `AdminLightConesController`, `AdminRelicSetsController` y `AdminDashboardController`, todos protegidos con `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(UserRole.ADMIN)`, exponiendo CRUD completo y endpoints `POST`/`DELETE :id/splash-art`.
+- **Ya existe** `media/media.service.ts` cumpliendo el rol de `StorageService` (driver `LOCAL`, guarda en `apps/api/uploads/`).
+- Los endpoints públicos de catálogo (`characters`, `light-cones`) **ya son solo lectura** (`GET`); no hay escritura pública expuesta.
+- `POST /auth/change-password` **ya requiere** usuario autenticado vía `JwtAuthGuard` (no depende de un email público).
+- El JWT **ya incluye** el campo `role` en su payload, y existe `RolesGuard` + decorador `@Roles()`.
+
+Conclusión: la mayor parte del backend descrito en este documento (secciones 6, 7, 9 y 10) **ya está implementada**. El trabajo pendiente real se concentra en:
+
+1. ~~**Frontend admin**: faltan `/admin/users`, `/admin/catalog/characters`, `/admin/catalog/light-cones`, `/admin/catalog/artifacts` y `/admin/catalog/ornaments`.~~ ✅ **Completado 2026-10-12.** Las 5 rutas existen, cada una con su propio `AdminAccessGate`, fetch independiente, formularios por bloques y upload de media vía `FormData`. Artefactos y ornamentos comparten un único componente parametrizado (`RelicSetsPanel`) en vez de duplicar código. El dashboard monolítico (`admin-dashboard-client.tsx`) se redujo a resumen + tarjetas de redirección a cada módulo. Verificado con `tsc`, `eslint`, `next build` y pruebas funcionales end-to-end contra la API real (CRUD + upload/remove de splash art y retrato + guardia de "último admin activo").
+2. **Backend — pulido menor, aún pendiente**: `StorageService` no es todavía una interfaz explícita y desacoplada (hoy vive embebida en `MediaService` con driver LOCAL); extraerla facilitaría migrar a S3/R2 más adelante.
+3. ~~**Testing e2e** automatizado del flujo admin (Fase 6).~~ ✅ **Completado 2026-10-12.** 48 tests en `apps/api/test/admin-*.e2e-spec.ts` (RBAC, CRUD + upload/archive de usuarios/personajes/conos/relic sets, filtro `?type=`, validaciones de la sección 13). Al escribirlos se detectó y corrigió un bug real de esquema: `RelicSet.name` estaba declarado `@unique` en `schema.prisma` pero la migración que creó la tabla (`20260629190000_admin_media_catalog`) nunca generó ese índice — permitía nombres duplicados de artefactos/ornamentos en producción. Corregido con la migración `20261012040000_add_relic_set_name_unique`. Con esto, las validaciones de la sección 13 quedan **confirmadas por test**, no solo supuestas: email/nombre/slug únicos (409), password mínimo 8 caracteres (400), upload no-imagen rechazado (400), límite de 10MB vía `multer`, y la guardia de "último admin activo" (400).
+4. Mantener este documento actualizado a medida que avance el trabajo, para que no vuelva a quedar desalineado con el código real.
 
 ### Riesgos actuales a corregir antes o junto con el módulo admin
 
-- El cambio de contraseña no debe depender solo de un email público.
-- Los endpoints de escritura del catálogo no deben permanecer públicos.
-- El CRUD de usuarios no debe estar accesible sin autenticación y autorización.
+> Ya mitigados en backend (ver hallazgos arriba); se conservan como checklist de verificación continua, no como pendientes de cero.
+
+- El cambio de contraseña no debe depender solo de un email público. — **Mitigado**: requiere JWT + password actual.
+- Los endpoints de escritura del catálogo no deben permanecer públicos. — **Mitigado**: escritura solo vía `/admin/*` con `RolesGuard`.
+- El CRUD de usuarios no debe estar accesible sin autenticación y autorización. — **Mitigado**: `AdminUsersController` protegido con `JwtAuthGuard` + `RolesGuard` + `@Roles(ADMIN)`.
 
 ## 4. Objetivo funcional del módulo admin
 
@@ -492,16 +508,18 @@ Esto facilita migrar luego a S3, R2 o Supabase Storage sin romper controladores.
 
 ## 15. Orden de implementación recomendado
 
-1. Prisma schema y migraciones.
-2. Seed del primer admin.
-3. Guards, decorators y RBAC.
-4. Corrección de endpoints inseguros actuales.
-5. CRUD admin de usuarios.
-6. CRUD admin de personajes y conos.
-7. CRUD admin de `RelicSet`.
-8. Módulo de media.
-9. Frontend `/admin`.
-10. Testing e2e.
+> Estado actualizado 2026-10-12: los 10 pasos están completos. Solo queda el pulido menor de la sección 3 (`StorageService` como interfaz desacoplada), que es una mejora opcional, no un bloqueante.
+
+1. ~~Prisma schema y migraciones.~~ ✅
+2. ~~Seed del primer admin.~~ ✅
+3. ~~Guards, decorators y RBAC.~~ ✅
+4. ~~Corrección de endpoints inseguros actuales.~~ ✅
+5. ~~CRUD admin de usuarios.~~ ✅ (backend + frontend)
+6. ~~CRUD admin de personajes y conos.~~ ✅ (backend + frontend)
+7. ~~CRUD admin de `RelicSet`.~~ ✅ (backend + frontend)
+8. ~~Módulo de media.~~ ✅
+9. ~~Frontend `/admin`.~~ ✅ Dashboard + `/admin/users` + `/admin/catalog/{characters,light-cones,artifacts,ornaments}`.
+10. ~~Testing e2e.~~ ✅ 48 tests en `apps/api/test/admin-*.e2e-spec.ts`, corriendo contra Postgres real vía el flujo register→login (sin JWT firmado a mano), siguiendo la convención ya establecida por `mvp-flow.e2e-spec.ts`.
 
 ## 16. Criterios de aceptación
 
