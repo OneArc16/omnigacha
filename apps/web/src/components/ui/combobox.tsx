@@ -223,7 +223,7 @@ export function Combobox({
         {allowClear && value && !disabled ? (
           <button
             type="button"
-            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold text-[var(--ink-500)] transition hover:bg-[var(--surface)] hover:text-[var(--ink-900)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            className="pointer-events-auto inline-flex h-6 w-6 items-center justify-center text-xs font-semibold text-[var(--ink-500)] transition hover:bg-[var(--surface)] hover:text-[var(--ink-900)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
             aria-label="Limpiar selección"
             onClick={(event) => {
               event.stopPropagation();
@@ -244,7 +244,7 @@ export function Combobox({
 
       {isOpen ? (
         <div
-          className="absolute z-40 mt-2 w-full rounded-2xl border border-[var(--line)] bg-[var(--surface)] shadow-[0_24px_60px_-28px_rgba(2,6,23,0.9)]"
+          className="absolute z-40 mt-2 w-full border border-[var(--line)] bg-[var(--surface)] shadow-[0_24px_60px_-28px_rgba(2,6,23,0.9)]"
           role="dialog"
           aria-label="Selector con autocompletado"
         >
@@ -269,7 +269,7 @@ export function Combobox({
                     aria-selected={isSelected}
                     disabled={option.disabled}
                     className={[
-                      'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition',
+                      'flex w-full items-center justify-between px-3 py-2 text-left text-sm transition',
                       isHighlighted
                         ? 'bg-[var(--surface-2)] text-[var(--ink-900)]'
                         : 'text-[var(--ink-700)] hover:bg-[var(--surface-2)] hover:text-[var(--ink-900)]',

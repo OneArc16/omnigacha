@@ -4,11 +4,6 @@ type SkeletonProps = {
 
 export function Skeleton({ className = '' }: SkeletonProps) {
   return (
-    <div
-      className={[
-        'animate-pulse rounded-lg bg-[var(--surface-elevated)]/80',
-        className,
-      ].join(' ')}
-    />
+    <div className={`animate-pulse bg-track/70 ${className}`.trim()} />
   );
 }

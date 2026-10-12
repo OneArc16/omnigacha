@@ -3,15 +3,19 @@
 import { FormEvent, useMemo } from 'react';
 import { Character, CharacterStatKey, LightCone } from '../../lib/api';
 import {
-  CHARACTER_STAT_UI,
   CharacterStatsFormValues,
   formatCharacterStatChip,
   getVisibleCharacterStatKeys,
 } from '../../lib/character-stats';
+import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { CheckboxField } from '../ui/checkbox-field';
 import { Input } from '../ui/input';
+import { Eyebrow, Inset } from '../ui/inset';
+import { Select } from '../ui/select';
 import { CharacterSummaryCard } from './character-summary-card';
 import { CharacterVisualPicker } from './character-visual-picker';
+import { StatFields } from './stat-fields';
 
 export type UserCharacterFormValues = {
   characterId: string;
@@ -44,30 +48,7 @@ type UserCharacterFormProps = {
   onCancel?: () => void;
 };
 
-function renderStatField(
-  statKey: CharacterStatKey,
-  values: UserCharacterFormValues,
-  onStatFieldChange: UserCharacterFormProps['onStatFieldChange'],
-) {
-  const config = CHARACTER_STAT_UI[statKey];
-
-  return (
-    <label
-      key={statKey}
-      className="space-y-1 text-xs font-medium text-[var(--ink-700)]"
-    >
-      {config.label}
-      <Input
-        type="number"
-        min={config.min}
-        step={config.step}
-        value={values.stats[statKey]}
-        onChange={(event) => onStatFieldChange(statKey, event.target.value)}
-        placeholder={config.placeholder}
-      />
-    </label>
-  );
-}
+const FIELD_LABEL_CLASSNAME = 'space-y-1 text-xs font-medium text-[var(--ink-700)]';
 
 export function UserCharacterForm({
   catalog,
@@ -99,6 +80,7 @@ export function UserCharacterForm({
     () => getVisibleCharacterStatKeys(selectedCharacter),
     [selectedCharacter],
   );
+
   return (
     <form className="space-y-4" onSubmit={onSubmit}>
       <div className="space-y-3">
@@ -115,7 +97,7 @@ export function UserCharacterForm({
           />
         )}
 
-        <div className="flex gap-3">
+        <div className="flex gap-2.5">
           <Button type="submit" disabled={isSubmitting || !values.characterId}>
             {isSubmitting ? 'Guardando...' : submitLabel}
           </Button>
@@ -128,7 +110,7 @@ export function UserCharacterForm({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+        <label className={FIELD_LABEL_CLASSNAME}>
           Nivel
           <Input
             type="number"
@@ -141,7 +123,7 @@ export function UserCharacterForm({
           />
         </label>
 
-        <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+        <label className={FIELD_LABEL_CLASSNAME}>
           Eidolon
           <Input
             type="number"
@@ -156,38 +138,24 @@ export function UserCharacterForm({
       </div>
 
       {showManualToggle ? (
-        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-          <label className="flex items-center gap-2 text-sm font-medium text-[var(--ink-800)]">
-            <input
-              className="h-4 w-4 accent-[var(--brand-600)]"
-              type="checkbox"
-              checked={useManualStats}
-              onChange={(event) =>
-                onUseManualStatsChange?.(event.target.checked)
-              }
-            />
-            Quiero digitar manualmente los stats relevantes de este personaje
-          </label>
-          <p className="mt-1 text-xs text-[var(--ink-500)]">
-            Si no activas esta opción, se guardarán valores por defecto del catálogo 3.8
-            usando base + rastros compatibles.
-          </p>
-        </div>
+        <Inset className="p-3">
+          <CheckboxField
+            checked={useManualStats}
+            onChange={(checked) => onUseManualStatsChange?.(checked)}
+            label="Quiero digitar manualmente los stats relevantes de este personaje"
+            hint="Si no activas esta opción, se guardarán valores por defecto del catálogo 3.8 usando base + rastros compatibles."
+          />
+        </Inset>
       ) : null}
 
-      <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-          Cono de luz
-        </p>
+      <Inset className="space-y-3 p-3">
+        <Eyebrow>Cono de luz</Eyebrow>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+          <label className={FIELD_LABEL_CLASSNAME}>
             Cono equipado (opcional)
-            <select
-              className="w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]"
+            <Select
               value={values.lightConeId}
-              onChange={(event) =>
-                onFieldChange('lightConeId', event.target.value)
-              }
+              onChange={(event) => onFieldChange('lightConeId', event.target.value)}
             >
               <option value="">Sin cono registrado</option>
               {compatibleLightCones.map((lightCone) => (
@@ -195,10 +163,10 @@ export function UserCharacterForm({
                   {lightCone.name} - {lightCone.path} - {lightCone.rarity}*
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
 
-          <label className="space-y-1 text-xs font-medium text-[var(--ink-700)]">
+          <label className={FIELD_LABEL_CLASSNAME}>
             Nivel del cono (opcional)
             <Input
               type="number"
@@ -213,28 +181,24 @@ export function UserCharacterForm({
             />
           </label>
         </div>
-        <p className="text-xs text-[var(--ink-500)]">
+        <p className="text-xs text-muted">
           {characterPath
             ? `Solo se muestran conos compatibles con la vía ${characterPath}.`
             : 'Selecciona un personaje para filtrar conos compatibles por vía.'}
         </p>
-      </div>
+      </Inset>
 
       {selectedCharacter ? (
-        <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
+        <Inset className="space-y-3 p-3">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-              Perfil del personaje
-            </p>
-            <span className="rounded-full border border-[var(--line)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--ink-500)]">
-              {selectedCharacter.role}
-            </span>
+            <Eyebrow>Perfil del personaje</Eyebrow>
+            <Badge variant="outline">{selectedCharacter.role}</Badge>
           </div>
           <div className="flex flex-wrap gap-2">
             {visibleStatKeys.map((statKey) => (
               <span
                 key={statKey}
-                className="rounded-full border border-[var(--line)] bg-[var(--surface-3)] px-2.5 py-1 text-xs text-[var(--ink-700)]"
+                className="border border-[var(--line)] bg-[var(--surface-3)] px-2.5 py-1 text-xs text-[var(--ink-700)]"
               >
                 {formatCharacterStatChip(
                   statKey,
@@ -243,20 +207,19 @@ export function UserCharacterForm({
               </span>
             ))}
           </div>
-        </div>
+        </Inset>
       ) : null}
 
       {showStats ? (
-        <div className="space-y-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-500)]">
-            Stats a guardar
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {visibleStatKeys.map((statKey) =>
-              renderStatField(statKey, values, onStatFieldChange),
-            )}
-          </div>
-        </div>
+        <Inset className="space-y-3 p-3">
+          <Eyebrow>Stats a guardar</Eyebrow>
+          <StatFields
+            statKeys={visibleStatKeys}
+            values={values.stats}
+            onChange={onStatFieldChange}
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          />
+        </Inset>
       ) : null}
     </form>
   );

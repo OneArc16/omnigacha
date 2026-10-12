@@ -1,262 +1,269 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DamageComparisonChart } from '../../../components/charts/damage-comparison-chart';
+import {
+  HeaderStrip,
+  HeaderStripSkeleton,
+} from '../../../components/layout/header-strip';
+import { getAppShellClassName } from '../../../components/layout/page-shell';
+import { SignInRequired } from '../../../components/layout/sign-in-required';
+import { RecommendationSummaryCard } from '../../../components/recommendations/recommendation-summary-card';
 import { Alert } from '../../../components/ui/alert';
-import { Card } from '../../../components/ui/card';
-import { loadAuthTokens } from '../../../lib/auth-storage';
+import { Badge } from '../../../components/ui/badge';
+import { ButtonLink } from '../../../components/ui/button-link';
+import { Eyebrow, Inset } from '../../../components/ui/inset';
+import { Note } from '../../../components/ui/note';
+import { Skeleton } from '../../../components/ui/skeleton';
+import { StatTile } from '../../../components/ui/stat-tile';
+import { WindowPanel } from '../../../components/ui/window-panel';
 import {
   apiRequest,
-  CharacterStatKey,
   RecommendationDetailResponse,
   SimulationDetailResponse,
 } from '../../../lib/api';
-import { formatCharacterStatChip } from '../../../lib/character-stats';
+import { useAuthTokens, useHydratedValue } from '../../../lib/auth-storage';
+import { SCENARIO_CHART_HELP } from './scenario-result';
+import {
+  formatDamage,
+  formatDate,
+  formatOptional,
+  formatSigned,
+  formatStatSummary,
+  resolveSimulationType,
+  SIMULATION_TYPE_LABEL,
+} from './simulator-format';
+
+type HistoryKind = 'recommendation' | 'simulation';
 
 type HistoryDetailClientProps = {
-  kind: 'recommendation' | 'simulation';
+  kind: HistoryKind;
   id: number;
 };
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleString('es-CO', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  });
+const KIND_UI: Record<HistoryKind, { title: string; path: string }> = {
+  recommendation: {
+    title: 'Detalle de recomendación',
+    path: '/simulations/recommendations',
+  },
+  simulation: {
+    title: 'Detalle de simulación',
+    path: '/simulations/history',
+  },
+};
+
+function RecommendationDetail({ detail }: { detail: RecommendationDetailResponse }) {
+  return (
+    <WindowPanel
+      title={detail.targetCharacter}
+      subtitle={`Creado: ${formatDate(detail.createdAt)}`}
+    >
+      <RecommendationSummaryCard
+        eyebrow="Veredicto"
+        name={detail.targetCharacter}
+        character={null}
+        level={detail.level}
+        score={detail.score}
+      />
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <StatTile
+          label="Delta estimado"
+          value={`${formatSigned(detail.estimatedDeltaDmg, 1)}%`}
+          caption="cambio de daño del equipo"
+        />
+        <StatTile
+          label="Equipos compatibles"
+          value={detail.compatibleTeams}
+          caption="composiciones que habilita"
+          accent="var(--purple)"
+        />
+      </div>
+
+      <Note className="mt-3">{detail.explanation}</Note>
+    </WindowPanel>
+  );
 }
 
-function formatSigned(value: number, digits = 2) {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`;
-}
-
-function formatStatsSummary(
-  statKeys: CharacterStatKey[],
-  stats: Record<string, number | undefined> | undefined,
-) {
-  if (!stats) {
-    return 'N/A';
-  }
-
-  const resolvedKeys =
-    statKeys.length > 0
-      ? statKeys
-      : (Object.keys(stats).filter(Boolean) as CharacterStatKey[]);
-
-  return resolvedKeys
-    .map((statKey) => formatCharacterStatChip(statKey, stats[statKey]))
-    .join(' · ');
-}
-
-export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
-  const [accessToken] = useState(() => loadAuthTokens().accessToken);
-  const [error, setError] = useState('');
-  const [recommendationDetail, setRecommendationDetail] =
-    useState<RecommendationDetailResponse | null>(null);
-  const [simulationDetail, setSimulationDetail] =
-    useState<SimulationDetailResponse | null>(null);
-
-  useEffect(() => {
-    if (!accessToken) return;
-
-    const path =
-      kind === 'recommendation'
-        ? `/simulations/recommendations/${id}`
-        : `/simulations/history/${id}`;
-
-    apiRequest<RecommendationDetailResponse | SimulationDetailResponse>(path, {
-      token: accessToken,
-    })
-      .then((response) => {
-        if (kind === 'recommendation') {
-          setRecommendationDetail(response as RecommendationDetailResponse);
-          setSimulationDetail(null);
-        } else {
-          setSimulationDetail(response as SimulationDetailResponse);
-          setRecommendationDetail(null);
-        }
-      })
-      .catch((err: Error) => setError(err.message));
-  }, [accessToken, id, kind]);
-
-  const simulationIsDamageScenario = useMemo(() => {
-    if (!simulationDetail) return false;
-    return (
-      simulationDetail.payload?.type === 'damage_scenario' ||
-      simulationDetail.label.startsWith('damage-sim-')
-    );
-  }, [simulationDetail]);
-
-  if (!accessToken) {
-    return (
-      <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
-        <Card
-          title="Detalle de historial"
-          subtitle="Necesitas iniciar sesión para ver este detalle."
-        >
-          <Link
-            className="text-sm font-semibold text-[var(--brand-700)] hover:underline"
-            href="/"
-          >
-            Volver al inicio
-          </Link>
-        </Card>
-      </main>
-    );
-  }
+function DamageScenarioDetail({ detail }: { detail: SimulationDetailResponse }) {
+  const { payload } = detail;
+  const statKeys = payload.statKeys ?? [];
+  const hasDamageTotals =
+    typeof payload.baseTeamDamage === 'number' &&
+    typeof payload.simulatedTeamDamage === 'number';
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-6 px-4 py-10 sm:px-6">
-      <Card
-        title={kind === 'recommendation' ? 'Detalle de recomendación' : 'Detalle de simulación'}
-        subtitle={`ID #${id}`}
+    <>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatTile
+          label="Cambio estimado"
+          value={formatOptional(
+            payload.deltaPercent,
+            (value) => `${formatSigned(value)}%`,
+          )}
+          caption="daño del equipo"
+        />
+        <StatTile
+          label="Daño base"
+          value={formatOptional(payload.baseTeamDamage, formatDamage)}
+          caption="antes del ajuste"
+          accent="var(--purple)"
+        />
+        <StatTile
+          label="Daño simulado"
+          value={formatOptional(payload.simulatedTeamDamage, formatDamage)}
+          caption="con los stats objetivo"
+          accent="var(--cyan)"
+        />
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Inset>
+          <Eyebrow>Stats base</Eyebrow>
+          <p className="mt-2 text-sm text-[var(--ink-700)]">
+            {formatStatSummary(statKeys, payload.baseStats)}
+          </p>
+        </Inset>
+        <Inset>
+          <Eyebrow>Stats simuladas</Eyebrow>
+          <p className="mt-2 text-sm text-[var(--ink-700)]">
+            {formatStatSummary(statKeys, payload.simulatedStats)}
+          </p>
+        </Inset>
+      </div>
+
+      {hasDamageTotals ? (
+        <DamageComparisonChart
+          currentTotal={payload.baseTeamDamage ?? 0}
+          proposedTotal={payload.simulatedTeamDamage ?? 0}
+          currentLabel="Base"
+          proposedLabel="Simulado"
+          seriesName="Daño de escenario"
+          helpTextByLabel={SCENARIO_CHART_HELP}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function SimulationDetail({ detail }: { detail: SimulationDetailResponse }) {
+  const type = resolveSimulationType(detail);
+
+  return (
+    <WindowPanel
+      title={detail.label}
+      subtitle={`Creado: ${formatDate(detail.createdAt)}`}
+      action={
+        <Badge variant={type === 'damage_scenario' ? 'brand' : 'neutral'}>
+          {SIMULATION_TYPE_LABEL[type]}
+        </Badge>
+      }
+    >
+      <div className="space-y-3">
+        {detail.payload.characterName ? (
+          <Inset>
+            <Eyebrow>Personaje</Eyebrow>
+            <p className="mt-2 text-base font-semibold text-ink">
+              {detail.payload.characterName}
+            </p>
+          </Inset>
+        ) : null}
+
+        {type === 'damage_scenario' ? <DamageScenarioDetail detail={detail} /> : null}
+
+        <Inset>
+          <Eyebrow>Payload técnico</Eyebrow>
+          <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-[var(--ink-700)]">
+            {JSON.stringify(detail.payload, null, 2)}
+          </pre>
+        </Inset>
+      </div>
+    </WindowPanel>
+  );
+}
+
+type DetailState =
+  | { kind: 'recommendation'; detail: RecommendationDetailResponse }
+  | { kind: 'simulation'; detail: SimulationDetailResponse };
+
+function HistoryDetail({
+  kind,
+  id,
+  accessToken,
+}: HistoryDetailClientProps & { accessToken: string }) {
+  const ui = KIND_UI[kind];
+  const [state, setState] = useState<DetailState | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    apiRequest<RecommendationDetailResponse | SimulationDetailResponse>(
+      `${ui.path}/${id}`,
+      { token: accessToken },
+    )
+      .then((detail) => {
+        if (active) setState({ kind, detail } as DetailState);
+      })
+      .catch((err: Error) => {
+        if (active) setError(err.message);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [accessToken, id, kind, ui.path]);
+
+  return (
+    <>
+      <HeaderStrip
+        glyph="✦"
+        eyebrow="Laboratorio · Historial"
+        title={ui.title}
+        description={`Registro #${id}`}
       >
-        <div className="flex flex-wrap items-center gap-4 text-sm">
-          <Link className="font-semibold text-[var(--brand-700)] hover:underline" href="/simulator">
-            Volver al simulador
-          </Link>
+        <div className="xl:ml-auto">
+          <ButtonLink href="/simulator#history" variant="ghost">
+            ← Volver al historial
+          </ButtonLink>
         </div>
-      </Card>
+      </HeaderStrip>
 
       {error ? <Alert tone="error">{error}</Alert> : null}
 
-      {!error && !recommendationDetail && !simulationDetail ? (
-        <Card title="Cargando detalle" subtitle="Estamos recuperando la información seleccionada.">
-          <p className="text-sm text-[var(--ink-500)]">Un momento...</p>
-        </Card>
+      {!error && !state ? <Skeleton className="h-72 w-full bevel-14" /> : null}
+
+      {state?.kind === 'recommendation' ? (
+        <RecommendationDetail detail={state.detail} />
       ) : null}
-
-      {recommendationDetail ? (
-        <Card
-          title={recommendationDetail.targetCharacter}
-          subtitle={`Creado: ${formatDate(recommendationDetail.createdAt)}`}
-        >
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Puntaje</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {recommendationDetail.score}/100
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Nivel</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {recommendationDetail.level}
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Delta estimado</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {recommendationDetail.estimatedDeltaDmg}%
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Equipos compatibles</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {recommendationDetail.compatibleTeams}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Explicación</p>
-            <p className="mt-1 text-sm text-[var(--ink-700)]">{recommendationDetail.explanation}</p>
-          </div>
-        </Card>
+      {state?.kind === 'simulation' ? (
+        <SimulationDetail detail={state.detail} />
       ) : null}
+    </>
+  );
+}
 
-      {simulationDetail ? (
-        <Card
-          title={simulationDetail.label}
-          subtitle={`Creado: ${formatDate(simulationDetail.createdAt)}`}
-        >
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Tipo</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {simulationDetail.payload?.type ?? 'N/A'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Delta %</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {typeof simulationDetail.payload?.deltaPercent === 'number'
-                  ? `${formatSigned(simulationDetail.payload.deltaPercent)}%`
-                  : 'N/A'}
-              </p>
-            </div>
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Personaje</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--ink-900)]">
-                {simulationDetail.payload?.characterName ?? 'N/A'}
-              </p>
-            </div>
-          </div>
+export function HistoryDetailClient({ kind, id }: HistoryDetailClientProps) {
+  const { accessToken } = useAuthTokens();
+  const isAuthHydrated = useHydratedValue();
 
-          {simulationIsDamageScenario ? (
-            <div className="mt-3 space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats base</p>
-                  <p className="mt-1">
-                    {formatStatsSummary(
-                      (simulationDetail.payload?.statKeys ?? []) as CharacterStatKey[],
-                      simulationDetail.payload?.baseStats,
-                    )}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Stats simuladas</p>
-                  <p className="mt-1">
-                    {formatStatsSummary(
-                      (simulationDetail.payload?.statKeys ?? []) as CharacterStatKey[],
-                      simulationDetail.payload?.simulatedStats,
-                    )}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)]">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Daño base</p>
-                  <p className="mt-1 font-semibold text-[var(--ink-900)]">
-                    {typeof simulationDetail.payload?.baseTeamDamage === 'number'
-                      ? simulationDetail.payload.baseTeamDamage.toFixed(2)
-                      : 'N/A'}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3 text-sm text-[var(--ink-700)] md:col-span-2">
-                  <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Daño simulado</p>
-                  <p className="mt-1 font-semibold text-[var(--ink-900)]">
-                    {typeof simulationDetail.payload?.simulatedTeamDamage === 'number'
-                      ? simulationDetail.payload.simulatedTeamDamage.toFixed(2)
-                      : 'N/A'}
-                  </p>
-                </div>
-              </div>
-
-              {typeof simulationDetail.payload?.baseTeamDamage === 'number' &&
-              typeof simulationDetail.payload?.simulatedTeamDamage === 'number' ? (
-                <DamageComparisonChart
-                  currentTotal={simulationDetail.payload.baseTeamDamage}
-                  proposedTotal={simulationDetail.payload.simulatedTeamDamage}
-                  currentLabel="Base"
-                  proposedLabel="Simulado"
-                  seriesName="Daño de escenario"
-                  helpTextByLabel={{
-                    Base: 'Base: daño estimado antes del ajuste.',
-                    Simulado: 'Simulado: daño estimado después del ajuste.',
-                  }}
-                />
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-            <p className="text-xs uppercase tracking-wide text-[var(--ink-500)]">Payload técnico</p>
-            <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--ink-700)]">
-              {JSON.stringify(simulationDetail.payload, null, 2)}
-            </pre>
-          </div>
-        </Card>
-      ) : null}
+  return (
+    <main className={getAppShellClassName('compact')}>
+      {!isAuthHydrated ? (
+        <HeaderStripSkeleton />
+      ) : accessToken ? (
+        <HistoryDetail
+          key={`${kind}-${id}`}
+          kind={kind}
+          id={id}
+          accessToken={accessToken}
+        />
+      ) : (
+        <SignInRequired
+          title={KIND_UI[kind].title}
+          description="Necesitas iniciar sesión para ver este registro."
+        />
+      )}
     </main>
   );
 }

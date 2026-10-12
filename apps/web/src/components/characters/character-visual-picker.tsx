@@ -56,11 +56,11 @@ export function CharacterVisualPicker({
       />
 
       {filteredCharacters.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-2)] px-4 py-8 text-center text-sm text-[var(--ink-500)]">
+        <div className="border border-dashed border-[var(--line)] bg-[var(--surface-2)] px-4 py-8 text-center text-sm text-[var(--ink-500)]">
           {emptyText}
         </div>
       ) : (
-        <div className="grid max-h-96 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid max-h-96 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 2xl:grid-cols-3">
           {filteredCharacters.map((character) => (
             <CharacterSummaryCard
               key={character.id}

@@ -6,8 +6,8 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
       <input
         ref={ref}
         className={[
-          'w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] placeholder:text-[var(--ink-400)]',
-          'transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]',
+          'w-full border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-ink placeholder:text-dim',
+          'transition focus:border-gold-deep focus:outline-none focus:ring-1 focus:ring-[var(--brand-200)] disabled:cursor-not-allowed disabled:opacity-60',
           className,
         ].join(' ')}
         {...props}

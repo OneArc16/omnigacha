@@ -5,21 +5,19 @@ import {
   BarChart,
   CartesianGrid,
   Legend,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-
-type TeamDamageMember = {
-  id: number;
-  name: string;
-  role: 'dps' | 'sub_dps' | 'support' | 'sustain' | 'unknown';
-  profile: 'single_target' | 'aoe' | 'dot' | 'burst' | 'utility';
-  damage: number;
-  synergyMultiplier: number;
-  profileMultiplier: number;
-};
+import type { TeamDamageMember } from '../../lib/api';
+import {
+  CHART_AXIS_TICK,
+  CHART_COLORS,
+  CHART_GRID_PROPS,
+  CHART_LEGEND_PROPS,
+  CHART_TOOLTIP_PROPS,
+  ChartFrame,
+} from './chart-kit';
 
 type TeamMemberContributionChartProps = {
   currentMembers: TeamDamageMember[];
@@ -36,28 +34,28 @@ type ContributionPoint = {
   proposedDamage: number;
 };
 
-type TooltipPayloadItem = {
-  payload?: ContributionPoint;
-};
-
 type ContributionTooltipProps = {
   active?: boolean;
-  payload?: TooltipPayloadItem[];
+  payload?: { payload?: ContributionPoint }[];
 };
 
+const MAX_TEAM_SIZE = 4;
+const MAX_AXIS_NAME_LENGTH = 12;
+
 function toShortName(name: string) {
-  if (name.length <= 12) return name;
-  return `${name.slice(0, 12)}...`;
+  return name.length <= MAX_AXIS_NAME_LENGTH
+    ? name
+    : `${name.slice(0, MAX_AXIS_NAME_LENGTH)}...`;
 }
 
 function buildContributionData(
   currentMembers: TeamDamageMember[],
   proposedMembers: TeamDamageMember[],
-) {
+): ContributionPoint[] {
   const currentById = new Map(currentMembers.map((member) => [member.id, member]));
 
-  // Keep exactly the proposed team order (up to 4 members), so axis matches final team.
-  return proposedMembers.slice(0, 4).map((member) => ({
+  // El eje sigue el orden del equipo propuesto para que coincida con el equipo final.
+  return proposedMembers.slice(0, MAX_TEAM_SIZE).map((member) => ({
     id: member.id,
     name: member.name,
     shortName: toShortName(member.name),
@@ -68,38 +66,31 @@ function buildContributionData(
   }));
 }
 
-function formatDamage(value: number) {
-  return value.toFixed(2);
-}
-
 function ContributionTooltip({ active, payload }: ContributionTooltipProps) {
-  if (!active || !payload || payload.length === 0) {
-    return null;
-  }
-
-  const point = payload[0]?.payload;
+  const point = active ? payload?.[0]?.payload : undefined;
   if (!point) return null;
 
   const delta = point.proposedDamage - point.currentDamage;
 
   return (
-    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-xs text-[var(--ink-800)] shadow-sm">
-      <p className="font-semibold text-[var(--ink-900)]">{point.name}</p>
+    <div className="border border-[var(--line-strong)] bg-panel p-3 text-xs text-[var(--ink-800)]">
+      <p className="font-semibold text-ink">{point.name}</p>
       <p className="mt-1">
         Rol: <span className="font-medium">{point.role}</span> · Perfil:{' '}
         <span className="font-medium">{point.profile}</span>
       </p>
       <p className="mt-1">
-        Actual: <span className="font-medium">{formatDamage(point.currentDamage)}</span>
+        Actual: <span className="font-medium">{point.currentDamage.toFixed(2)}</span>
       </p>
       <p>
-        Propuesto: <span className="font-medium">{formatDamage(point.proposedDamage)}</span>
+        Propuesto:{' '}
+        <span className="font-medium">{point.proposedDamage.toFixed(2)}</span>
       </p>
       <p>
         Delta miembro:{' '}
-        <span className={`font-medium ${delta >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+        <span className={`font-medium ${delta >= 0 ? 'text-success' : 'text-danger'}`}>
           {delta >= 0 ? '+' : ''}
-          {formatDamage(delta)}
+          {delta.toFixed(2)}
         </span>
       </p>
     </div>
@@ -113,33 +104,32 @@ export function TeamMemberContributionChart({
   const data = buildContributionData(currentMembers, proposedMembers);
 
   return (
-    <div className="h-80 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-2)] p-3">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 12, right: 12, left: 8, bottom: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-          <XAxis
-            dataKey="shortName"
-            interval={0}
-            tick={{ fill: 'var(--chart-axis)', fontSize: 12 }}
-            tickMargin={10}
-          />
-          <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 12 }} />
-          <Tooltip content={<ContributionTooltip />} />
-          <Legend />
-          <Bar
-            dataKey="currentDamage"
-            name="Equipo actual"
-            fill="#0284c7"
-            radius={[8, 8, 0, 0]}
-          />
-          <Bar
-            dataKey="proposedDamage"
-            name="Equipo propuesto"
-            fill="#0ea5e9"
-            radius={[8, 8, 0, 0]}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
+    <ChartFrame heightClassName="h-80">
+      <BarChart data={data} margin={{ top: 12, right: 12, left: 8, bottom: 20 }}>
+        <CartesianGrid {...CHART_GRID_PROPS} />
+        <XAxis
+          dataKey="shortName"
+          interval={0}
+          tick={CHART_AXIS_TICK}
+          tickMargin={10}
+        />
+        <YAxis tick={CHART_AXIS_TICK} />
+        <Tooltip
+          cursor={CHART_TOOLTIP_PROPS.cursor}
+          content={<ContributionTooltip />}
+        />
+        <Legend {...CHART_LEGEND_PROPS} />
+        <Bar
+          dataKey="currentDamage"
+          name="Equipo actual"
+          fill={CHART_COLORS.current}
+        />
+        <Bar
+          dataKey="proposedDamage"
+          name="Equipo propuesto"
+          fill={CHART_COLORS.proposed}
+        />
+      </BarChart>
+    </ChartFrame>
   );
 }

@@ -2,39 +2,120 @@
 
 :root {
   color-scheme: dark;
-  --font-ui-sans: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --font-ui-sans: var(--font-inter), "Inter", "Segoe UI", sans-serif;
   --font-ui-mono: "JetBrains Mono", "SFMono-Regular", "SF Mono", ui-monospace,
     monospace;
-  --bg: #050a15;
-  --surface: #0b1424;
-  --surface-2: #101d33;
-  --surface-3: #162640;
-  --surface-elevated: #1d2f4d;
-  --ink-900: #e2e8f0;
-  --ink-800: #cbd5e1;
-  --ink-700: #a9b6cb;
-  --ink-600: #92a3bc;
-  --ink-500: #7d90ab;
-  --ink-400: #61748e;
-  --line: #243651;
-  --line-strong: #2f4668;
-  --brand-200: #145169;
-  --brand-400: #22c1ee;
-  --brand-500: #06a8dd;
-  --brand-600: #0284c7;
-  --brand-700: #0369a1;
-  --positive-500: #10b981;
-  --danger-500: #f43f5e;
-  --warning-500: #f59e0b;
-  --chart-grid: #304766;
-  --chart-axis: #9bb0cb;
+
+  /* Paleta base (docs/mockup.html) */
+  --bg: #070a16;
+  --bg-2: #0b1024;
+  --panel: #0e1530;
+  --panel-2: #121a3a;
+  --line-gold: rgba(214, 186, 128, 0.22);
+  --line-soft: rgba(160, 180, 255, 0.1);
+  --gold: #e8c987;
+  --gold-deep: #b8925a;
+  --text: #e9ecf8;
+  --muted: #8b93b8;
+  --dim: #59608a;
+  --track: #24305e;
+  --purple: #b48cff;
+  --purple-deep: #8f6ad8;
+  --cyan: #7fd3ff;
+  --red: #ff6b7f;
+  --green: #7be0b0;
+  --amber: #f5b95f;
+
+  /* Alias heredados: simulador y admin siguen consumiendo estos nombres */
+  --surface: var(--panel);
+  --surface-2: var(--panel-2);
+  --surface-3: #0a0f24;
+  --surface-elevated: #1c244e;
+  --ink-900: var(--text);
+  --ink-800: #cfd6f5;
+  --ink-700: #b3bbd9;
+  --ink-600: #9aa2c6;
+  --ink-500: var(--muted);
+  --ink-400: var(--dim);
+  --line: rgba(160, 180, 255, 0.14);
+  --line-strong: rgba(160, 180, 255, 0.26);
+  --brand-200: rgba(232, 201, 135, 0.28);
+  --brand-400: var(--gold);
+  --brand-500: #d9b572;
+  --brand-600: #c99f5f;
+  --brand-700: var(--gold-deep);
+  --positive-500: var(--green);
+  --danger-500: var(--red);
+  --warning-500: var(--amber);
+  --chart-grid: #2a3360;
+  --chart-axis: var(--muted);
 }
 
 @theme inline {
   --color-background: var(--bg);
-  --color-foreground: var(--ink-900);
+  --color-foreground: var(--text);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-dim: var(--dim);
+  --color-track: var(--track);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-gold: var(--gold);
+  --color-gold-deep: var(--gold-deep);
+  --color-accent-purple: var(--purple);
+  --color-accent-purple-deep: var(--purple-deep);
+  --color-accent-cyan: var(--cyan);
+  --color-danger: var(--red);
+  --color-success: var(--green);
+  --color-warning: var(--amber);
+  --color-line-soft: var(--line-soft);
+  --color-line-gold: var(--line-gold);
   --font-sans: var(--font-ui-sans);
   --font-mono: var(--font-ui-mono);
+}
+
+/* Esquinas biseladas: bevel-14 (paneles), bevel-12 (tarjetas), bevel-8 (botones) */
+@utility bevel-* {
+  --bevel: calc(--value(integer) * 1px);
+  clip-path: polygon(
+    var(--bevel) 0,
+    100% 0,
+    100% calc(100% - var(--bevel)),
+    calc(100% - var(--bevel)) 100%,
+    0 100%,
+    0 var(--bevel)
+  );
+}
+
+@utility surface-frame-edge {
+  background: linear-gradient(
+    135deg,
+    rgba(232, 201, 135, 0.55),
+    rgba(232, 201, 135, 0.08) 35%,
+    rgba(140, 160, 255, 0.12) 70%,
+    rgba(232, 201, 135, 0.4)
+  );
+}
+
+@utility surface-panel {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+}
+
+@utility surface-strip {
+  background: linear-gradient(
+    90deg,
+    rgba(28, 36, 78, 0.95),
+    rgba(16, 22, 48, 0.95) 55%,
+    rgba(40, 30, 70, 0.9)
+  );
+}
+
+@utility surface-gold {
+  background: linear-gradient(180deg, #f3dba4, #c99f5f);
+}
+
+@utility surface-inset {
+  background: rgba(7, 10, 22, 0.45);
 }
 
 html,
@@ -48,21 +129,21 @@ html {
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--ink-900);
+  color: var(--text);
   font-family: var(--font-ui-sans);
-  background-image:
+  background:
     radial-gradient(
-      circle at 15% 10%,
-      color-mix(in oklab, var(--brand-500) 20%, transparent) 0%,
-      transparent 34%
+      1200px 500px at 85% -10%,
+      rgba(120, 90, 200, 0.22),
+      transparent 60%
     ),
     radial-gradient(
-      circle at 85% -5%,
-      color-mix(in oklab, var(--warning-500) 16%, transparent) 0%,
-      transparent 34%
+      900px 500px at 0% 110%,
+      rgba(40, 110, 200, 0.18),
+      transparent 60%
     ),
-    linear-gradient(180deg, #050a15 0%, #040812 100%);
+    var(--bg);
+  background-attachment: fixed;
 }
 
 * {
@@ -70,6 +151,6 @@ body {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--brand-500) 35%, transparent);
-  color: var(--ink-900);
+  background: color-mix(in oklab, var(--gold) 35%, transparent);
+  color: var(--text);
 }

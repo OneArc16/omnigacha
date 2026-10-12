@@ -27,7 +27,7 @@ export function CharacterSummaryCard({
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={[
-        'flex items-start gap-3 rounded-2xl border p-3 text-left transition',
+        'flex items-start gap-3 border p-3 text-left transition',
         selected
           ? 'border-[var(--brand-400)] bg-[var(--surface-2)] ring-1 ring-[var(--brand-400)]'
           : 'border-[var(--line)] bg-[var(--surface-2)]/70',
@@ -40,11 +40,23 @@ export function CharacterSummaryCard({
         <p className="truncate text-sm font-semibold text-[var(--ink-900)]">
           {character.name}
         </p>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="brand">{character.element}</Badge>
-          <Badge variant="outline">{character.path}</Badge>
-          <Badge variant="neutral">{character.role}</Badge>
-        </div>
+        {size === 'sm' ? (
+          // En rejillas compactas las etiquetas no caben: se resumen en texto.
+          <>
+            <p className="truncate text-xs text-muted">
+              {character.element} · {character.path}
+            </p>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-gold">
+              {character.role}
+            </p>
+          </>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant="brand">{character.element}</Badge>
+            <Badge variant="outline">{character.path}</Badge>
+            <Badge variant="neutral">{character.role}</Badge>
+          </div>
+        )}
         {trailing}
       </div>
     </Wrapper>

@@ -15,7 +15,7 @@ const SIZE_CLASSNAME: Record<NonNullable<CharacterPortraitProps['size']>, string
   lg: 'w-32',
 };
 
-function getInitials(name: string) {
+export function getInitials(name: string) {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '?';
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
@@ -32,7 +32,7 @@ export function CharacterPortrait({
   return (
     <div
       className={[
-        'relative aspect-[3/4] shrink-0 overflow-hidden rounded-2xl border border-[var(--line)]',
+        'relative aspect-[3/4] shrink-0 overflow-hidden border border-[var(--line)]',
         SIZE_CLASSNAME[size],
         className,
       ].join(' ')}
