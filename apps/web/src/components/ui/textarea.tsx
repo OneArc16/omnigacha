@@ -8,8 +8,8 @@ export const Textarea = forwardRef<
     <textarea
       ref={ref}
       className={[
-        'min-h-28 w-full rounded-xl border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-[var(--ink-900)] placeholder:text-[var(--ink-400)]',
-        'transition focus:border-[var(--brand-500)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-200)]',
+        'min-h-28 w-full border border-[var(--line)] bg-[var(--surface-3)] px-3 py-2.5 text-sm text-ink placeholder:text-dim',
+        'transition focus:border-gold-deep focus:outline-none focus:ring-1 focus:ring-[var(--brand-200)]',
         className,
       ].join(' ')}
       {...props}

@@ -1,27 +1,22 @@
 import Image from 'next/image';
-import { toast } from 'sonner';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
+import { Field } from '../../../components/ui/field';
 import { Input } from '../../../components/ui/input';
+import { EmptyState } from '../../../components/ui/inset';
+import { WindowPanel } from '../../../components/ui/window-panel';
 import { buildApiAssetUrl } from '../../../lib/api';
-import { Field } from './admin-form-fields';
+import type { AdminMediaSlot } from './use-admin-media-slot';
 
 type MediaSlotCardProps = {
   title: string;
   emptyMessage: string;
-  item?: {
-    id: number;
-    name: string;
-    slug: string;
-  } | null;
+  item: { name: string } | null;
   imageUrl?: string | null;
-  assetId?: number | null;
   uploadButtonLabel: string;
-  previewAspectClassName?: string;
+  previewClassName?: string;
   hint?: string;
-  onUpload: (formData: FormData) => Promise<void>;
-  onRemove: () => Promise<void>;
-  isUploading: boolean;
+  media: AdminMediaSlot;
 };
 
 export function MediaSlotCard({
@@ -29,57 +24,42 @@ export function MediaSlotCard({
   emptyMessage,
   item,
   imageUrl,
-  assetId,
   uploadButtonLabel,
-  previewAspectClassName = 'h-60',
+  previewClassName = 'h-60',
   hint,
-  onUpload,
-  onRemove,
-  isUploading,
+  media,
 }: MediaSlotCardProps) {
-  return (
-    <section className="rounded-3xl border border-[var(--line)] bg-[var(--surface-2)]/70 p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-500)]">
-            {title}
-          </p>
-          <h3 className="mt-1 text-base font-semibold text-[var(--ink-900)]">
-            {item ? item.name : 'Sin selección'}
-          </h3>
-          <p className="mt-1 text-sm text-[var(--ink-600)]">
-            {item ? item.slug : emptyMessage}
-          </p>
-          {hint ? (
-            <p className="mt-1 text-xs text-[var(--ink-500)]">{hint}</p>
-          ) : null}
-        </div>
-        {item ? (
-          <Badge variant={assetId ? 'success' : 'warning'}>
-            {assetId ? 'Con imagen' : 'Sin imagen'}
-          </Badge>
-        ) : null}
-      </div>
+  const previewSrc = buildApiAssetUrl(imageUrl);
 
+  return (
+    <WindowPanel
+      title={title}
+      subtitle={item ? item.name : 'Sin selección'}
+      action={
+        item ? (
+          <Badge variant={previewSrc ? 'success' : 'warning'} dot>
+            {previewSrc ? 'Con imagen' : 'Sin imagen'}
+          </Badge>
+        ) : null
+      }
+    >
       {item ? (
-        <div className="mt-4 space-y-4">
+        <div className="space-y-4">
           <div
-            className={`overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--surface)] ${previewAspectClassName}`}
+            className={`relative overflow-hidden border border-line-soft surface-inset ${previewClassName}`}
           >
-            {imageUrl ? (
-              <div className="relative h-full w-full">
-                <Image
-                  src={buildApiAssetUrl(imageUrl) ?? ''}
-                  alt={item.name}
-                  fill
-                  sizes="(max-width: 640px) 100vw, 480px"
-                  className="object-cover"
-                  unoptimized
-                />
-              </div>
+            {previewSrc ? (
+              <Image
+                src={previewSrc}
+                alt={item.name}
+                fill
+                sizes="(max-width: 640px) 100vw, 480px"
+                className="object-cover"
+                unoptimized
+              />
             ) : (
-              <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[var(--ink-500)]">
-                Todavia no hay imagen asociada.
+              <div className="grid h-full place-items-center px-4 text-center text-sm text-muted">
+                Todavía no hay imagen asociada.
               </div>
             )}
           </div>
@@ -89,44 +69,32 @@ export function MediaSlotCard({
             onSubmit={async (event) => {
               event.preventDefault();
               const form = event.currentTarget;
-              const formData = new FormData(form);
-
-              try {
-                await onUpload(formData);
-                form.reset();
-              } catch (error) {
-                toast.error(
-                  error instanceof Error
-                    ? error.message
-                    : 'No fue posible subir la imagen.',
-                );
-              }
+              if (await media.upload(new FormData(form))) form.reset();
             }}
           >
             <Field
               label="Archivo"
-              hint="Imágenes PNG, JPG, WEBP, GIF, AVIF o SVG. Límite de 10 MB."
+              hint={hint ?? 'PNG, JPG, WEBP, GIF, AVIF o SVG. Límite de 10 MB.'}
             >
               <Input
                 name="file"
                 type="file"
                 accept="image/*"
                 required
-                className="file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--surface-2)] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[var(--ink-900)]"
+                className="file:mr-3 file:border-0 file:bg-[rgba(233,236,248,.08)] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-ink"
               />
             </Field>
 
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={isUploading}>
-                {isUploading ? 'Subiendo...' : uploadButtonLabel}
+            <div className="flex flex-wrap gap-2.5">
+              <Button type="submit" size="sm" disabled={media.isBusy}>
+                {media.isBusy ? 'Procesando...' : uploadButtonLabel}
               </Button>
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => {
-                  void onRemove();
-                }}
-                disabled={isUploading || !assetId}
+                size="sm"
+                onClick={media.remove}
+                disabled={media.isBusy || !previewSrc}
               >
                 Quitar imagen
               </Button>
@@ -134,10 +102,8 @@ export function MediaSlotCard({
           </form>
         </div>
       ) : (
-        <div className="mt-4 rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface)] px-4 py-8 text-sm text-[var(--ink-500)]">
-          {emptyMessage}
-        </div>
+        <EmptyState>{emptyMessage}</EmptyState>
       )}
-    </section>
+    </WindowPanel>
   );
 }
