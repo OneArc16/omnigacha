@@ -3,7 +3,8 @@
 import { useMemo, useState } from 'react';
 import { Character } from '../../lib/api';
 import { Input } from '../ui/input';
-import { CharacterSummaryCard } from './character-summary-card';
+import { EmptyState } from '../ui/inset';
+import { CharacterTile } from './character-tile';
 
 type CharacterVisualPickerProps = {
   characters: Character[];
@@ -47,7 +48,7 @@ export function CharacterVisualPicker({
   }, [characters, query]);
 
   return (
-    <div className={['space-y-3', className].join(' ')}>
+    <div className={`space-y-3 ${className}`.trim()}>
       <Input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
@@ -56,22 +57,17 @@ export function CharacterVisualPicker({
       />
 
       {filteredCharacters.length === 0 ? (
-        <div className="border border-dashed border-[var(--line)] bg-[var(--surface-2)] px-4 py-8 text-center text-sm text-[var(--ink-500)]">
-          {emptyText}
-        </div>
+        <EmptyState className="py-8 text-center">{emptyText}</EmptyState>
       ) : (
-        <div className="grid max-h-96 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 2xl:grid-cols-3">
+        // Las fichas se reparten solas según el ancho del panel que las contiene.
+        <div className="grid max-h-[26rem] grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-2 overflow-y-auto p-px pr-1">
           {filteredCharacters.map((character) => (
-            <CharacterSummaryCard
+            <CharacterTile
               key={character.id}
               character={character}
-              size="sm"
               selected={character.id === value}
-              onClick={
-                disabled
-                  ? undefined
-                  : () => onValueChange(character.id === value ? null : character.id)
-              }
+              disabled={disabled}
+              onClick={() => onValueChange(character.id === value ? null : character.id)}
             />
           ))}
         </div>

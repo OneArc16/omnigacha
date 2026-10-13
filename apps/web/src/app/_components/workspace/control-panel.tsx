@@ -1,3 +1,7 @@
+import {
+  getRarityBarClassName,
+  isFiveStar,
+} from '../../../components/characters/rarity-style';
 import { Alert } from '../../../components/ui/alert';
 import { Button } from '../../../components/ui/button';
 import { ButtonLink } from '../../../components/ui/button-link';
@@ -6,24 +10,18 @@ import { Note } from '../../../components/ui/note';
 import { WindowPanel } from '../../../components/ui/window-panel';
 import type { UserCharacter } from '../../../lib/api';
 
-const FIVE_STAR_RARITY = 5;
-
-const RARITY_SEGMENT_CLASSNAME = {
-  fiveStar: 'bg-[linear-gradient(90deg,#e8c987,#c99f5f)]',
-  fourStar: 'bg-accent-purple-deep',
-  empty: 'bg-track',
-};
+const EMPTY_SEGMENT_CLASSNAME = getRarityBarClassName(0);
 
 function RarityBar({ fiveStar, fourStar }: { fiveStar: number; fourStar: number }) {
   const segments = [
-    ...Array<string>(fiveStar).fill(RARITY_SEGMENT_CLASSNAME.fiveStar),
-    ...Array<string>(fourStar).fill(RARITY_SEGMENT_CLASSNAME.fourStar),
+    ...Array<string>(fiveStar).fill(getRarityBarClassName(5)),
+    ...Array<string>(fourStar).fill(getRarityBarClassName(4)),
   ];
 
   return (
     <>
       <div className="mt-3.5 flex gap-[3px]">
-        {(segments.length > 0 ? segments : [RARITY_SEGMENT_CLASSNAME.empty]).map(
+        {(segments.length > 0 ? segments : [EMPTY_SEGMENT_CLASSNAME]).map(
           (segmentClassName, index) => (
             <i key={index} className={`h-1.5 flex-1 ${segmentClassName}`} />
           ),
@@ -55,8 +53,8 @@ export function ControlPanel({
   onManageRoster,
 }: ControlPanelProps) {
   const total = characters.length;
-  const fiveStar = characters.filter(
-    (entry) => entry.character.rarity >= FIVE_STAR_RARITY,
+  const fiveStar = characters.filter((entry) =>
+    isFiveStar(entry.character.rarity),
   ).length;
 
   return (
