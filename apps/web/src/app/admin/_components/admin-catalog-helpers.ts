@@ -48,7 +48,10 @@ export function readCatalogBasePayload(formData: FormData) {
 }
 
 /** Devuelve `{ [field]: valor }` solo si el campo opcional trae texto. */
-export function readOptionalField(formData: FormData, field: string) {
+export function readOptionalField<K extends string>(
+  formData: FormData,
+  field: K,
+): Partial<Record<K, string>> {
   const value = readOptionalText(formData, field);
-  return value ? { [field]: value } : {};
+  return value ? ({ [field]: value } as Record<K, string>) : {};
 }

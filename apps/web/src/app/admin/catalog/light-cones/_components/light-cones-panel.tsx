@@ -5,11 +5,7 @@ import { Field } from '../../../../../components/ui/field';
 import { Input } from '../../../../../components/ui/input';
 import { Textarea } from '../../../../../components/ui/textarea';
 import type { LightCone } from '../../../../../lib/api';
-import {
-  getRarityLabel,
-  readCatalogBasePayload,
-  readOptionalField,
-} from '../../../_components/admin-catalog-helpers';
+import { getRarityLabel } from '../../../_components/admin-catalog-helpers';
 import {
   CatalogListItem,
   EditorModeBadge,
@@ -20,7 +16,6 @@ import {
   StatusField,
 } from '../../../_components/admin-catalog-parts';
 import { EditorPanel } from '../../../_components/admin-editor-panel';
-import { readRequiredText } from '../../../_components/admin-form-utils';
 import { ADMIN_EDITOR_GRID_CLASSNAME } from '../../../_components/admin-layout';
 import { MediaSlotCard } from '../../../_components/admin-media-slot-card';
 import { AdminPage } from '../../../_components/admin-page';
@@ -30,6 +25,7 @@ import {
   AdminResourceLabels,
   useAdminResource,
 } from '../../../_components/use-admin-resource';
+import { buildLightConePayload } from './light-cone-payload';
 
 const LABELS: AdminResourceLabels = {
   loadError: 'No fue posible cargar los conos de luz.',
@@ -49,14 +45,6 @@ function getSearchFields(lightCone: LightCone) {
     lightCone.status,
     String(lightCone.rarity),
   ];
-}
-
-function buildLightConePayload(formData: FormData) {
-  return {
-    ...readCatalogBasePayload(formData),
-    path: readRequiredText(formData, 'path', 'Camino'),
-    ...readOptionalField(formData, 'effectDescription'),
-  };
 }
 
 function LightConeFields({ lightCone }: { lightCone: LightCone | null }) {

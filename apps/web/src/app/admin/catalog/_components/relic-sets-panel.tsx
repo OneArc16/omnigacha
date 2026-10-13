@@ -4,11 +4,7 @@ import { Badge } from '../../../../components/ui/badge';
 import { Field } from '../../../../components/ui/field';
 import { Textarea } from '../../../../components/ui/textarea';
 import type { RelicSet } from '../../../../lib/api';
-import {
-  getRarityLabel,
-  readCatalogBasePayload,
-  readOptionalField,
-} from '../../_components/admin-catalog-helpers';
+import { getRarityLabel } from '../../_components/admin-catalog-helpers';
 import {
   CatalogListItem,
   EditorModeBadge,
@@ -20,7 +16,6 @@ import {
   StatusField,
 } from '../../_components/admin-catalog-parts';
 import { EditorPanel } from '../../_components/admin-editor-panel';
-import { readRequiredText } from '../../_components/admin-form-utils';
 import { ADMIN_EDITOR_GRID_CLASSNAME } from '../../_components/admin-layout';
 import { MediaSlotCard } from '../../_components/admin-media-slot-card';
 import { AdminPage } from '../../_components/admin-page';
@@ -30,8 +25,7 @@ import {
   AdminResourceLabels,
   useAdminResource,
 } from '../../_components/use-admin-resource';
-
-type RelicSetKind = RelicSet['type'];
+import { buildRelicSetPayload, type RelicSetKind } from './relic-set-payload';
 
 type KindCopy = {
   singular: string;
@@ -78,16 +72,6 @@ const LABELS: Record<RelicSetKind, AdminResourceLabels> = {
 
 function getSearchFields(relicSet: RelicSet) {
   return [relicSet.name, relicSet.slug, relicSet.status, String(relicSet.rarity)];
-}
-
-function buildRelicSetPayload(formData: FormData, type: RelicSetKind) {
-  return {
-    ...readCatalogBasePayload(formData),
-    type,
-    twoPieceBonus: readRequiredText(formData, 'twoPieceBonus', 'Bonus de 2 piezas'),
-    ...readOptionalField(formData, 'fourPieceBonus'),
-    ...readOptionalField(formData, 'gameVersion'),
-  };
 }
 
 function RelicSetFields({ relicSet }: { relicSet: RelicSet | null }) {

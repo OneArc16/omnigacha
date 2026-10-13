@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import { formatDateTime, matchesQuery, normalizeText, upsertById } from './admin-utils';
 
 test('normalizeText strips accents, case and surrounding whitespace', () => {

@@ -16,12 +16,6 @@ import {
   apiRequest,
 } from '../../../../lib/api';
 import { EditorPanel } from '../../_components/admin-editor-panel';
-import {
-  readBoolean,
-  readOptionalText,
-  readRequiredText,
-  readText,
-} from '../../_components/admin-form-utils';
 import { ADMIN_EDITOR_GRID_CLASSNAME } from '../../_components/admin-layout';
 import { AdminPage } from '../../_components/admin-page';
 import { ResourceListPanel } from '../../_components/admin-resource-list';
@@ -30,6 +24,7 @@ import {
   AdminResourceLabels,
   useAdminResource,
 } from '../../_components/use-admin-resource';
+import { buildUserPayload } from './user-payload';
 
 const LABELS: AdminResourceLabels = {
   loadError: 'No fue posible cargar los usuarios.',
@@ -49,22 +44,6 @@ const GOOD_PRACTICES = [
 
 function getSearchFields(user: AdminUserRecord) {
   return [user.name, user.email, user.role];
-}
-
-function buildUserPayload(formData: FormData, isNew: boolean) {
-  // La contraseña es obligatoria al crear y opcional al editar.
-  const password = isNew
-    ? readRequiredText(formData, 'password', 'Contraseña')
-    : readOptionalText(formData, 'password');
-
-  return {
-    name: readRequiredText(formData, 'name', 'Nombre'),
-    email: readRequiredText(formData, 'email', 'Correo'),
-    role: readText(formData, 'role') || 'USER',
-    isActive: readBoolean(formData, 'isActive'),
-    mustChangePassword: readBoolean(formData, 'mustChangePassword'),
-    ...(password ? { password } : {}),
-  };
 }
 
 /** Admins activos según la API; `null` mientras no se conoce. */

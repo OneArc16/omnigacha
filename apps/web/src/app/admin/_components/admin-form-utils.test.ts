@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
+import { formDataWith } from '../../../lib/test-utils';
 import {
   readBoolean,
   readNumber,
@@ -7,14 +8,6 @@ import {
   readRequiredText,
   readText,
 } from './admin-form-utils';
-
-function formDataWith(entries: Record<string, string>) {
-  const formData = new FormData();
-  for (const [key, value] of Object.entries(entries)) {
-    formData.set(key, value);
-  }
-  return formData;
-}
 
 test('readText trims whitespace and returns empty string for missing fields', () => {
   assert.equal(readText(formDataWith({ name: '  Seele  ' }), 'name'), 'Seele');
